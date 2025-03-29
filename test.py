@@ -1,54 +1,38 @@
 import torch
 import torch.nn as nn
+import torch.backends.cudnn as cudnn
 import torchvision
+import torchvision.transforms as transforms
 import numpy as np
+import os
+import argparse
+from tqdm import tqdm
+import pickle
 
-# 1. Define GCN Layer
-class GCNLayer(nn.Module):
-    def __init__(self, in_features, out_features):
-        super().__init__()
-        self.linear = nn.Linear(in_features, out_features)
-        self.activation = nn.LeakyReLU(negative_slope=0.2)
-    
-    def forward(self, H, A_hat):
-        H_transformed = self.linear(H)
-        H_next = torch.matmul(A_hat, H_transformed)
-        return self.activation(H_next)
+from models import gcn_resnet101
+from engine import GCNMultiLabelMAPEngine
+from util import gen_A, gen_adj, AveragePrecisionMeter, Warp, MultiScaleCrop
+from dataset import TrainDataset, ValDataset
 
-# 2. Define GCN Module
-class GCN(nn.Module):
-    def __init__(self, in_features, hidden_features, out_features):
-        super().__init__()
-        self.gcn1 = GCNLayer(in_features, hidden_features)
-        self.gcn2 = GCNLayer(hidden_features, out_features)
-    
-    def forward(self, Z, A_hat):
-        H = self.gcn1(Z, A_hat)
-        H = self.gcn2(H, A_hat)
-        return H
-
-# 3. Define ML-GCN Model
-class MLGCN(nn.Module):
-    def __init__(self, num_labels, embedding_dim, adj_matrix, label_embeddings, resnet_out_dim=2048, gcn_hidden=1024):
-        super().__init__()
-        # Image feature extractor (ResNet-50 up to layer4)
-        self.resnet = nn.Sequential(*list(torchvision.models.resnet50(pretrained=True).children())[:-2])
-        self.global_pool = nn.AdaptiveMaxPool2d((1, 1))
-        # GCN for classifier generation
-        self.gcn = GCN(embedding_dim, gcn_hidden, resnet_out_dim)
-        # Register buffers for fixed parameters
-        self.register_buffer('adj_matrix', torch.FloatTensor(adj_matrix))
-        self.register_buffer('label_embeddings', torch.FloatTensor(label_embeddings))
-    
-    def forward(self, x):
-        # Image features (B, 2048)
-        x = self.resnet(x)
-        x = self.global_pool(x).flatten(1)
-        # Generate classifiers via GCN (C, 2048)
-        W = self.gcn(self.label_embeddings, self.adj_matrix)
-        # Calculate logits (B, C)
-        logits = torch.matmul(x, W.T)
-        return logits
+# Parse arguments
+parser = argparse.ArgumentParser(description='ML-GCN Training')
+parser.add_argument('--data', metavar='DIR', help='path to dataset')
+parser.add_argument('--model-path', default='checkpoint', type=str, help='Path to save models')
+parser.add_argument('--adj-file', default='data/adj_matrix.pkl', type=str, help='Path to the adjacency matrix pickle file')
+parser.add_argument('--num-classes', default=80, type=int, help='Number of classes')
+parser.add_argument('--word-dim', default=300, type=int, help='Dimension of word embeddings')
+parser.add_argument('--batch-size', default=16, type=int, help='Batch size for training')
+parser.add_argument('--workers', default=4, type=int, help='Number of data loading workers')
+parser.add_argument('--epochs', default=20, type=int, help='Number of total epochs to run')
+parser.add_argument('--lr', default=0.1, type=float, help='Initial learning rate')
+parser.add_argument('--lr-decay', default=0.1, type=float, help='Learning rate decay')
+parser.add_argument('--epoch-decay', default=[30, 60], type=int, nargs='+', help='Epochs after which to decay learning rate')
+parser.add_argument('--resume', default='', type=str, help='Path to latest checkpoint')
+parser.add_argument('--evaluate', dest='evaluate', action='store_true', help='Evaluate model on validation set')
+parser.add_argument('--print-freq', default=100, type=int, help='Print frequency')
+parser.add_argument('--threshold', default=0.4, type=float, help='Threshold for adjacency matrix')
+parser.add_argument('--weight', default=0.2, type=float, help='Weight for adjacency matrix')
+parser.add_argument('--image-size', default=448, type=int, help='Input image size')
 
 # 4. Asymmetric Loss (ASL)
 class AsymmetricLoss(nn.Module):
@@ -64,59 +48,104 @@ class AsymmetricLoss(nn.Module):
         neg_loss = (1 - targets) * probabilities.pow(self.gamma_neg) * torch.log(1 - probabilities + self.eps)
         return -torch.mean(pos_loss + neg_loss)
 
-# 5. Precompute Adjacency Matrix (Example)
-def build_adjacency_matrix(labels, num_classes, tau=0.4, p=0.2):
-    # labels: List[List[int]] indicating label indices per sample
-    M = np.zeros((num_classes, num_classes))
-    N = np.zeros(num_classes)
-    for sample in labels:
-        for i in sample:
-            N[i] += 1
-            for j in sample:
-                if i != j:
-                    M[i, j] += 1
-    # Compute conditional probabilities
-    P = np.divide(M, N[:, None], out=np.zeros_like(M), where=N[:, None]!=0)
-    # Binarize and re-weight
-    A = (P >= tau).astype(np.float32)
-    A_prime = np.zeros_like(A)
-    for i in range(num_classes):
-        row_sum = A[i].sum()
-        if row_sum == 0:
-            A_prime[i, i] = 1.0
-        else:
-            A_prime[i] = A[i] * (p / row_sum)
-            A_prime[i, i] = 1 - p
-    return A_prime
+def load_word_embeddings(word_file, num_classes):
+    """Load pre-trained word embeddings for class labels"""
+    try:
+        with open(word_file, 'rb') as f:
+            word_embeddings = pickle.load(f)
+        return word_embeddings
+    except (FileNotFoundError, pickle.PickleError):
+        # Fallback: return random embeddings
+        print(f"Warning: Could not load word embeddings from {word_file}. Using random embeddings.")
+        return np.random.randn(num_classes, 300)  # 300 is typical for GloVe
 
-# Example Usage
-if __name__ == "__main__":
+def main():
+    args = parser.parse_args()
+    
+    # Create model directory
+    if not os.path.exists(args.model_path):
+        os.makedirs(args.model_path)
+    
+    # Load adjacency matrix
+    if os.path.exists(args.adj_file):
+        adj_matrix = gen_A(args.num_classes, args.threshold, args.adj_file)
+    else:
+        print(f"Warning: Adjacency file {args.adj_file} not found. Creating an identity matrix.")
+        adj_matrix = np.identity(args.num_classes)
+    
+    # Load word embeddings for classes
+    word_embeddings = load_word_embeddings('data/word_embeddings.pkl', args.num_classes)
+    
+    # Create model
+    model = gcn_resnet101(num_classes=args.num_classes, t=args.threshold, adj_file=args.adj_file, 
+                          in_channel=args.word_dim, pretrained=True)
+    
+    # Define loss function, optimizer, and learning rate scheduler
+    criterion = AsymmetricLoss(gamma_neg=2, gamma_pos=0)
+    
+    # Initialize the GCN Engine
+    state = {
+        'batch_size': args.batch_size,
+        'image_size': args.image_size,
+        'max_epochs': args.epochs,
+        'evaluate': args.evaluate,
+        'resume': args.resume,
+        'workers': args.workers,
+        'print_freq': args.print_freq,
+        'epoch_step': args.epoch_decay,
+        'save_model_path': args.model_path
+    }
+    engine = GCNMultiLabelMAPEngine(state)
+    
+    # Get optimizer with different learning rates for different parts of the model
+    optimizer = torch.optim.SGD(model.get_config_optim(args.lr, 0.1), lr=args.lr, 
+                               momentum=0.9, weight_decay=1e-4)
+    
+    # Load datasets
+    if not args.evaluate:
+        train_dataset = TrainDataset(args.data)
+        val_dataset = ValDataset(args.data)
+        
+        # Run training
+        engine.learning(model, criterion, train_dataset, val_dataset, optimizer)
+    else:
+        val_dataset = ValDataset(args.data)
+        
+        # Run evaluation
+        engine.validate(val_dataset, model, criterion)
+
+# Example of how to use the model
+def example_usage():
     # Hyperparameters
-    NUM_LABELS = 1000  # Example
+    NUM_LABELS = 80
     EMBEDDING_DIM = 300
     
     # Load label embeddings (e.g., GloVe)
     label_embeddings = np.random.randn(NUM_LABELS, EMBEDDING_DIM)  # Replace with real data
     
-    # Simulate training labels to build adjacency matrix
-    train_labels = [np.random.randint(0, NUM_LABELS, size=5) for _ in range(1000)]  # Replace with real data
-    adj_matrix = build_adjacency_matrix(train_labels, NUM_LABELS)
+    # Create model
+    model = gcn_resnet101(NUM_LABELS, t=0.4, pretrained=True)
+    model.eval()
     
-    # Initialize model
-    model = MLGCN(NUM_LABELS, EMBEDDING_DIM, adj_matrix, label_embeddings)
-    criterion = AsymmetricLoss(gamma_neg=2, gamma_pos=0)
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
-    
-    # Freeze ResNet layers except layer4
-    for name, param in model.resnet.named_parameters():
-        if 'layer4' not in name:
-            param.requires_grad = False
-    
-    # Training loop example
-    for epoch in range(20):
-        for images, targets in train_dataloader:  # Replace with actual dataloader
-            logits = model(images)
-            loss = criterion(logits, targets)
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+    # Example forward pass
+    dummy_input = torch.randn(1, 3, 448, 448)
+    with torch.no_grad():
+        # In real usage, you would pass features and word embeddings
+        features = model.features(dummy_input)
+        pooled_features = model.pooling(features).view(1, -1)
+        
+        # Assuming we have word embeddings and adjacency matrix
+        dummy_word_embeddings = torch.FloatTensor(label_embeddings).unsqueeze(0)
+        dummy_adj = gen_adj(torch.eye(NUM_LABELS))
+        
+        # Final prediction
+        outputs = model(dummy_input, [dummy_word_embeddings])
+        predicted = (torch.sigmoid(outputs) > 0.5).float()
+        
+        print(f"Example output shape: {outputs.shape}")
+        print(f"Example predictions: {predicted.sum().item()} labels detected")
+
+if __name__ == "__main__":
+    main()
+    # Uncomment to run example usage
+    # example_usage()
