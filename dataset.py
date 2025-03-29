@@ -3,23 +3,81 @@ import torch
 import torch.utils.data as data
 import numpy as np
 from PIL import Image
+import json
 
-class MLGCNDataset(data.Dataset):
-    def __init__(self, data_path, transform=None, target_transform=None):
+class COCODataset(data.Dataset):
+    def __init__(self, data_path, split='train', transform=None, target_transform=None):
         self.data_path = data_path
+        self.split = split  # 'train' or 'val'
         self.transform = transform
         self.target_transform = target_transform
         
-        # Load image paths and labels
+        # COCO paths
+        self.img_dir = os.path.join(data_path, f"{split}2017")
+        self.ann_file = os.path.join(data_path, "annotations", f"instances_{split}2017.json")
+        
+        # Load COCO annotations
         self.imgs = []
         self.labels = []
+        self.coco_ids = []
+        self.num_classes = 80
         
-        # Example implementation - override in subclasses
-        # Load your actual data here
-        self._load_data()
+        self._load_coco()
     
-    def _load_data(self):
-        raise NotImplementedError("Subclasses must implement _load_data")
+    def _load_coco(self):
+        if not os.path.exists(self.ann_file):
+            print(f"Warning: Annotation file {self.ann_file} not found. Using placeholders.")
+            # Create placeholder data
+            self.imgs = [f"placeholder_{i}.jpg" for i in range(10)]
+            self.labels = np.zeros((10, self.num_classes), dtype=np.float32)
+            return
+        
+        # Load COCO annotations
+        with open(self.ann_file, 'r') as f:
+            dataset = json.load(f)
+        
+        # Create category id mapping (COCO has non-contiguous ids)
+        categories = dataset['categories']
+        self.coco_id_to_index = {cat['id']: i for i, cat in enumerate(categories)}
+        
+        # Create image dictionary for faster access
+        img_dict = {img['id']: img for img in dataset['images']}
+        
+        # Group annotations by image
+        img_to_anns = {}
+        for ann in dataset['annotations']:
+            img_id = ann['image_id']
+            if img_id not in img_to_anns:
+                img_to_anns[img_id] = []
+            img_to_anns[img_id].append(ann)
+        
+        # Create dataset items
+        for img_id, anns in img_to_anns.items():
+            if img_id not in img_dict:
+                continue
+                
+            img_info = img_dict[img_id]
+            file_name = img_info['file_name']
+            img_path = os.path.join(self.img_dir, file_name)
+            
+            # Skip if image doesn't exist
+            if not os.path.exists(img_path):
+                continue
+                
+            # Create multi-label vector for this image
+            target = np.zeros(self.num_classes, dtype=np.float32)
+            for ann in anns:
+                category_id = ann['category_id']
+                if category_id in self.coco_id_to_index:
+                    label_idx = self.coco_id_to_index[category_id]
+                    target[label_idx] = 1.0
+            
+            self.imgs.append(img_path)
+            self.labels.append(target)
+            self.coco_ids.append(img_id)
+            
+        self.labels = np.array(self.labels)
+        print(f"Loaded {len(self.imgs)} images with {self.num_classes} categories for {self.split}")
     
     def __getitem__(self, index):
         img_path = self.imgs[index]
@@ -37,44 +95,10 @@ class MLGCNDataset(data.Dataset):
     def __len__(self):
         return len(self.imgs)
 
-class TrainDataset(MLGCNDataset):
-    def _load_data(self):
-        # Example implementation for COCO or similar datasets
-        img_dir = os.path.join(self.data_path, 'images', 'train')
-        label_file = os.path.join(self.data_path, 'labels', 'train_labels.npy')
-        
-        if os.path.exists(label_file):
-            self.labels = np.load(label_file)
-        else:
-            # Placeholder for demo
-            self.labels = np.zeros((10, 80), dtype=np.float32)
-        
-        # Get image paths
-        if os.path.exists(img_dir):
-            self.imgs = [os.path.join(img_dir, img_name) for img_name in os.listdir(img_dir)
-                        if img_name.endswith(('.jpg', '.jpeg', '.png'))][:len(self.labels)]
-        else:
-            # Placeholder for demo
-            self.imgs = [f"placeholder_{i}.jpg" for i in range(len(self.labels))]
-            print(f"Warning: Image directory {img_dir} not found. Using placeholders.")
+class TrainDataset(COCODataset):
+    def __init__(self, data_path, transform=None, target_transform=None):
+        super().__init__(data_path, 'train', transform, target_transform)
 
-class ValDataset(MLGCNDataset):
-    def _load_data(self):
-        # Example implementation for COCO or similar datasets
-        img_dir = os.path.join(self.data_path, 'images', 'val')
-        label_file = os.path.join(self.data_path, 'labels', 'val_labels.npy')
-        
-        if os.path.exists(label_file):
-            self.labels = np.load(label_file)
-        else:
-            # Placeholder for demo
-            self.labels = np.zeros((10, 80), dtype=np.float32)
-        
-        # Get image paths
-        if os.path.exists(img_dir):
-            self.imgs = [os.path.join(img_dir, img_name) for img_name in os.listdir(img_dir)
-                        if img_name.endswith(('.jpg', '.jpeg', '.png'))][:len(self.labels)]
-        else:
-            # Placeholder for demo
-            self.imgs = [f"placeholder_{i}.jpg" for i in range(len(self.labels))]
-            print(f"Warning: Image directory {img_dir} not found. Using placeholders.")
+class ValDataset(COCODataset):
+    def __init__(self, data_path, transform=None, target_transform=None):
+        super().__init__(data_path, 'val', transform, target_transform)

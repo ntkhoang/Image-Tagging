@@ -48,22 +48,54 @@ curl -LsSf https://github.com/astral-sh/uv/releases/latest/download/uv-installer
    uv pip install -r requirements.txt
    ```
 
-### Running the Project
+## Using MS COCO Dataset
 
-After activating the virtual environment, you can run the project:
+### Download COCO Dataset
 
+1. Download the COCO 2017 dataset:
+   - [Train images (18GB)](http://images.cocodataset.org/zips/train2017.zip)
+   - [Validation images (1GB)](http://images.cocodataset.org/zips/val2017.zip)
+   - [Annotations (241MB)](http://images.cocodataset.org/annotations/annotations_trainval2017.zip)
+
+2. Extract these files to create the following directory structure:
+   ```
+   /path/to/coco/
+   ├── annotations/
+   │   ├── instances_train2017.json
+   │   └── instances_val2017.json
+   ├── train2017/
+   │   ├── 000000000001.jpg
+   │   └── ...
+   └── val2017/
+       ├── 000000000001.jpg
+       └── ...
+   ```
+
+### Creating Adjacency Matrix
+
+For ML-GCN to work, you need to create an adjacency matrix based on label co-occurrences:
+
+1. Run the preprocessing script to generate the adjacency matrix:
+   ```
+   python generate_adj.py --data /path/to/coco/
+   ```
+   This will create a file at `data/adj_matrix.pkl`.
+
+2. If you don't have the preprocessing script, you can also download a pre-computed adjacency matrix from:
+   https://github.com/Megvii-Nanjing/ML-GCN/tree/master/data
+
+### Running the Training
+
+Run the training with:
 ```
-python test.py
+python main.py --data /path/to/coco/ --batch-size 16 --image-size 448
 ```
 
-### Deactivating the Virtual Environment
-
-When you're done working on the project, you can deactivate the virtual environment:
-
+For evaluation only:
 ```
-deactivate
+python main.py --data /path/to/coco/ --evaluate --resume checkpoint/model_best.pth.tar
 ```
 
 ## Project Description
 
-This project implements an ML-GCN (Multi-Label Graph Convolutional Network) model for image tagging. It uses ResNet-50 as the backbone for feature extraction and a Graph Convolutional Network to model label relationships.
+This project implements an ML-GCN (Multi-Label Graph Convolutional Network) model for image tagging. It uses ResNet-101 as the backbone for feature extraction and a Graph Convolutional Network to model label relationships.
