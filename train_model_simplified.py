@@ -13,9 +13,9 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Train ImageGCN model for image tagging (Simplified Version)')
     parser.add_argument('--data-dir', type=str, required=True,
                         help='Path to dataset directory')
-    parser.add_argument('--batch-size', type=int, default=32,
+    parser.add_argument('--batch-size', type=int, default=16,
                         help='Batch size for training')
-    parser.add_argument('--epochs', type=int, default=30,
+    parser.add_argument('--epochs', type=int, default=10,
                         help='Number of epochs for training')
     parser.add_argument('--hidden-dim', type=int, default=512,
                         help='Hidden dimension for GCN layers')
@@ -33,8 +33,12 @@ def parse_args():
                         help='Directory to save models')
     parser.add_argument('--device', type=str, default='cuda',
                         help='Device to use (cuda/cpu)')
-    parser.add_argument('--num-workers', type=int, default=4,
+    parser.add_argument('--num-workers', type=int, default=2,
                         help='Number of workers for data loading')
+    parser.add_argument('--max-images', type=int, default=None,
+                        help='Maximum number of images to use (for quick testing)')
+    parser.add_argument('--image-size', type=int, default=128,
+                        help='Image size for training (smaller is faster)')
     return parser.parse_args()
 
 def load_images_and_labels(data_dir):
@@ -55,7 +59,18 @@ def load_images_and_labels(data_dir):
     # Check if this appears to be a COCO-style dataset
     ann_dir = os.path.join(data_dir, 'annotations')
     img_dir = os.path.join(data_dir, 'images')
-    is_coco_structure = os.path.isdir(ann_dir) and os.path.isdir(img_dir)
+    
+    # Try direct structure first (if directories are directly in data_dir)
+    is_coco_structure = os.path.isdir(ann_dir) and os.path.exists(img_dir)
+    
+    # If not found, check if data_dir itself is the root containing annotations and split folders
+    if not is_coco_structure:
+        ann_dir = os.path.join(data_dir, 'annotations')
+        # COCO might not have an 'images' directory, but instead have train2017, val2017 etc. directly
+        is_coco_structure = (os.path.isdir(ann_dir) and 
+                           (os.path.isdir(os.path.join(data_dir, 'train2017')) or
+                            os.path.isdir(os.path.join(data_dir, 'val2017'))))
+        img_dir = data_dir  # In this case, splits are directly in data_dir
     
     if is_coco_structure:
         print("Detected COCO-style dataset structure")
@@ -64,8 +79,15 @@ def load_images_and_labels(data_dir):
         if not ann_files:
             raise FileNotFoundError(f"No annotation files found in {ann_dir}")
         
-        # Use the first annotation file
-        ann_file = ann_files[0]
+        # Prefer train2017 for training
+        train_ann_file = None
+        for ann_file in ann_files:
+            if 'train' in os.path.basename(ann_file):
+                train_ann_file = ann_file
+                break
+        
+        # If no train annotation found, use the first available
+        ann_file = train_ann_file or ann_files[0]
         print(f"Loading annotations from {ann_file}")
         
         # Load the annotation file
@@ -94,7 +116,8 @@ def load_images_and_labels(data_dir):
         
         # If specific split directory doesn't exist, try using any image subdirectory
         if not os.path.isdir(split_dir):
-            img_subdirs = [d for d in os.listdir(img_dir) if os.path.isdir(os.path.join(img_dir, d))]
+            img_subdirs = [d for d in os.listdir(img_dir) if os.path.isdir(os.path.join(img_dir, d)) 
+                           and not d == 'annotations']
             if img_subdirs:
                 split_dir = os.path.join(img_dir, img_subdirs[0])
             else:
@@ -104,7 +127,8 @@ def load_images_and_labels(data_dir):
         image_paths = []
         labels = []
         
-        # Create dataset
+        # Process each image with annotations
+        print(f"Processing {len(image_annotations)} images with annotations...")
         for img_id, anns in image_annotations.items():
             if img_id not in image_dict:
                 continue
@@ -114,7 +138,18 @@ def load_images_and_labels(data_dir):
             
             # Skip if image doesn't exist
             if not os.path.exists(img_path):
-                continue
+                # Try other possible split directories
+                found = False
+                for possible_dir in [os.path.join(img_dir, d) for d in os.listdir(img_dir) 
+                                    if os.path.isdir(os.path.join(img_dir, d)) and d != 'annotations']:
+                    possible_path = os.path.join(possible_dir, file_name)
+                    if os.path.exists(possible_path):
+                        img_path = possible_path
+                        found = True
+                        break
+                
+                if not found:
+                    continue
             
             # Create one-hot label vector
             label = np.zeros(num_classes)
@@ -127,6 +162,9 @@ def load_images_and_labels(data_dir):
             image_paths.append(img_path)
             labels.append(label)
         
+        if len(image_paths) == 0:
+            raise ValueError(f"No valid images found with annotations in {split_dir}. Please check your dataset.")
+            
         labels = np.array(labels)
         print(f"Loaded {len(image_paths)} images with {num_classes} classes")
         print(f"Class names: {category_names[:10]}..." if len(category_names) > 10 else f"Class names: {category_names}")
@@ -228,6 +266,13 @@ def train_model(args):
     # Load images and labels
     image_paths, labels = load_images_and_labels(args.data_dir)
     
+    # Limit number of images for quick testing if specified
+    if args.max_images and args.max_images < len(image_paths):
+        print(f"Limiting to {args.max_images} images for faster training")
+        indices = np.random.choice(len(image_paths), args.max_images, replace=False)
+        image_paths = [image_paths[i] for i in indices]
+        labels = labels[indices]
+    
     # Split dataset into train, validation, and test sets
     train_img_paths, val_img_paths, train_labels, val_labels = train_test_split(
         image_paths, labels, test_size=0.2, random_state=42, stratify=labels.sum(axis=1) > 0
@@ -241,9 +286,12 @@ def train_model(args):
     print(f"Validation set: {len(val_img_paths)} images")
     print(f"Test set: {len(test_img_paths)} images")
     
-    # Create transforms
+    # Create transforms with smaller image size
+    img_size = args.image_size
+    print(f"Using image size: {img_size}x{img_size}")
+    
     train_transform = transforms.Compose([
-        transforms.Resize((224, 224)),
+        transforms.Resize((img_size, img_size)),
         transforms.RandomHorizontalFlip(),
         transforms.RandomRotation(10),
         transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
@@ -252,7 +300,7 @@ def train_model(args):
     ])
     
     val_transform = transforms.Compose([
-        transforms.Resize((224, 224)),
+        transforms.Resize((img_size, img_size)),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])

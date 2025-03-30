@@ -64,6 +64,10 @@ class ImageGCNSimple(nn.Module):
             self.feature_extractor = nn.Sequential(*modules)
             self.feature_dim = 2048
         
+        # Freeze the feature extractor to speed up training
+        for param in self.feature_extractor.parameters():
+            param.requires_grad = False
+            
         # Use our simplified GCN implementation instead of TwoLayerGCN
         self.gcn = SimplifiedGCN(
             input_size=feature_dim,
@@ -83,11 +87,12 @@ class ImageGCNSimple(nn.Module):
         """
         Extract image features from the feature extractor
         """
-        if isinstance(self.feature_extractor, nn.Sequential):
-            features = self.feature_extractor(images)
-            features = features.squeeze(-1).squeeze(-1)  # Remove spatial dimensions
-        else:
-            features = self.feature_extractor(images)  # For ViT
+        with torch.no_grad():  # No need to compute gradients for frozen parameters
+            if isinstance(self.feature_extractor, nn.Sequential):
+                features = self.feature_extractor(images)
+                features = features.squeeze(-1).squeeze(-1)  # Remove spatial dimensions
+            else:
+                features = self.feature_extractor(images)  # For ViT
         return features
     
     def forward(self, images, adj_matrix=None):
