@@ -1,17 +1,8 @@
 torch>=2.0.0
 torchvision>=0.15.0
-numpy>=1.24.0
-matplotlib>=3.7.0
-tqdm>=4.65.0
-pillow>=9.5.0
-scikit-learn>=1.2.0
-torchnet>=0.0.4
-tensorboardX>=2.6.0
-scipy>=1.10.0 
-transformers>=4.25.0
-torch-geometric>=2.3.0
-torch-scatter>=2.1.0
-torch-sparse>=0.6.16
-torch-cluster>=2.1.0
-torch-spline-conv>=1.2.1
+numpy>=1.20.0
+pillow>=9.0.0
+tqdm>=4.64.0
+scikit-learn>=1.0.0
+matplotlib>=3.5.0
 
