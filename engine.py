@@ -6,12 +6,31 @@ import torch.backends.cudnn as cudnn
 import torch.nn.parallel
 import torch.optim
 import torch.utils.data
-import torchnet as tnt
+# Remove torchnet dependency
+# import torchnet as tnt
 import torchvision.transforms as transforms
 import torch.nn as nn
+from tqdm import tqdm
 from util import *
 
 tqdm.monitor_interval = 0
+
+# Custom implementation of AverageValueMeter to replace torchnet
+class AverageValueMeter(object):
+    def __init__(self):
+        super(AverageValueMeter, self).__init__()
+        self.reset()
+        
+    def reset(self):
+        self.sum = 0.0
+        self.n = 0
+        
+    def add(self, value):
+        self.sum += value
+        self.n += 1
+        
+    def value(self):
+        return [self.sum / self.n if self.n > 0 else 0.0, 0.0]
 
 class Engine(object):
     def __init__(self, state={}):
@@ -44,9 +63,9 @@ class Engine(object):
             self.state['epoch_step'] = []
 
         # meters
-        self.state['meter_loss'] = tnt.meter.AverageValueMeter()
-        self.state['batch_time'] = tnt.meter.AverageValueMeter()
-        self.state['data_time'] = tnt.meter.AverageValueMeter()
+        self.state['meter_loss'] = AverageValueMeter()
+        self.state['batch_time'] = AverageValueMeter()
+        self.state['data_time'] = AverageValueMeter()
 
         # display parameters
         if self._state('use_pb') is None:
