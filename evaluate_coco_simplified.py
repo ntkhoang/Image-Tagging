@@ -25,14 +25,44 @@ def load_coco_data(coco_dir, split='val2017'):
         labels: Numpy array of labels (one-hot encoded)
         category_names: List of category names
     """
-    img_dir = os.path.join(coco_dir, 'images', split)
-    ann_file = os.path.join(coco_dir, 'annotations', f'instances_{split}.json')
+    # Try multiple possible directory structures
+    possible_img_dirs = [
+        os.path.join(coco_dir, 'images', split),  # Standard: coco_dir/images/val2017
+        os.path.join(coco_dir, split),            # Kaggle: coco_dir/val2017
+        os.path.join(coco_dir),                   # All images in root
+        os.path.join(coco_dir, 'val2017')         # Specific case for validation
+    ]
     
-    # Check if files exist
-    if not os.path.exists(img_dir):
-        raise FileNotFoundError(f"Image directory not found: {img_dir}")
-    if not os.path.exists(ann_file):
-        raise FileNotFoundError(f"Annotation file not found: {ann_file}")
+    # Find the first valid image directory
+    img_dir = None
+    for dir_path in possible_img_dirs:
+        if os.path.exists(dir_path) and os.path.isdir(dir_path):
+            # Check if directory contains images
+            if any(f.endswith('.jpg') for f in os.listdir(dir_path)[:100] if os.path.isfile(os.path.join(dir_path, f))):
+                img_dir = dir_path
+                print(f"Found images in: {img_dir}")
+                break
+    
+    if img_dir is None:
+        raise FileNotFoundError(f"Could not find image directory for {split} in {coco_dir}")
+    
+    # Try multiple possible annotation file locations
+    possible_ann_files = [
+        os.path.join(coco_dir, 'annotations', f'instances_{split}.json'),  # Standard
+        os.path.join(coco_dir, f'instances_{split}.json'),                  # Root level
+        os.path.join(coco_dir, 'annotations', 'instances_val2017.json')    # Fixed val file
+    ]
+    
+    # Find the first valid annotation file
+    ann_file = None
+    for file_path in possible_ann_files:
+        if os.path.exists(file_path) and os.path.isfile(file_path):
+            ann_file = file_path
+            print(f"Found annotations in: {ann_file}")
+            break
+    
+    if ann_file is None:
+        raise FileNotFoundError(f"Could not find annotation file for {split} in {coco_dir}")
     
     print(f"Loading COCO annotations from {ann_file}")
     with open(ann_file, 'r') as f:
@@ -82,7 +112,7 @@ def load_coco_data(coco_dir, split='val2017'):
     print(f"Loaded {len(image_paths)} images with {NUM_CLASSES} categories")
     return image_paths, np.array(labels), category_names
 
-def evaluate_model_on_coco(coco_dir, model_path=None, batch_size=16, device='cuda'):
+def evaluate_model_on_coco(coco_dir, model_path=None, batch_size=8, device='cuda', max_images=5000, image_size=128):
     """
     Evaluate ImageGCN model on COCO dataset
     
@@ -91,6 +121,8 @@ def evaluate_model_on_coco(coco_dir, model_path=None, batch_size=16, device='cud
         model_path: Path to saved model weights (optional)
         batch_size: Batch size for evaluation
         device: Device to use (cuda/cpu)
+        max_images: Maximum number of images to use (for quicker evaluation)
+        image_size: Image size for evaluation
         
     Returns:
         evaluation_results: Dictionary with evaluation metrics
@@ -102,16 +134,23 @@ def evaluate_model_on_coco(coco_dir, model_path=None, batch_size=16, device='cud
     # Load validation data
     val_image_paths, val_labels, category_names = load_coco_data(coco_dir, split='val2017')
     
+    # Limit number of images if specified
+    if max_images and len(val_image_paths) > max_images:
+        print(f"Limiting evaluation to {max_images} images for faster processing")
+        indices = np.random.choice(len(val_image_paths), max_images, replace=False)
+        val_image_paths = [val_image_paths[i] for i in indices]
+        val_labels = val_labels[indices]
+    
     # Create transforms
     transform = transforms.Compose([
-        transforms.Resize((224, 224)),
+        transforms.Resize((image_size, image_size)),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
     
     # Create dataset and data loader
     val_dataset = ImageTaggingDataset(val_image_paths, val_labels, transform=transform)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=2)
     
     # Create adjacency matrix from labels
     adj_matrix = create_adjacency_matrix(val_labels, threshold=0.2)
@@ -138,7 +177,7 @@ def evaluate_model_on_coco(coco_dir, model_path=None, batch_size=16, device='cud
     
     # Evaluate model
     print("Evaluating model on COCO val2017 dataset...")
-    results = trainer.evaluate(val_loader, adj_matrix)
+    results = trainer.evaluate(val_loader)  # No need for adjacency matrix
     
     # Print results
     print("\nEvaluation Results:")
@@ -173,19 +212,40 @@ def main():
                         help='Path to COCO dataset directory')
     parser.add_argument('--model-path', type=str, default=None,
                         help='Path to saved model weights')
-    parser.add_argument('--batch-size', type=int, default=16,
+    parser.add_argument('--batch-size', type=int, default=8,
                         help='Batch size for evaluation')
     parser.add_argument('--device', type=str, default='cuda',
                         help='Device to use (cuda/cpu)')
+    parser.add_argument('--max-images', type=int, default=5000,
+                        help='Maximum number of images to use (for quicker evaluation)')
+    parser.add_argument('--image-size', type=int, default=128,
+                        help='Image size for evaluation')
+    parser.add_argument('--num-workers', type=int, default=2,
+                        help='Number of workers for data loading')
     
     args = parser.parse_args()
     
-    evaluate_model_on_coco(
-        coco_dir=args.coco_dir,
-        model_path=args.model_path,
-        batch_size=args.batch_size,
-        device=args.device
-    )
+    try:
+        evaluate_model_on_coco(
+            coco_dir=args.coco_dir,
+            model_path=args.model_path,
+            batch_size=args.batch_size,
+            device=args.device,
+            max_images=args.max_images,
+            image_size=args.image_size
+        )
+    except FileNotFoundError as e:
+        print(f"Error: {e}")
+        print("\nPossible solutions:")
+        print("1. Check if your COCO dataset path is correct")
+        print("2. Make sure annotations/instances_val2017.json exists")
+        print("3. Verify that dataset contains images in expected locations")
+        print("\nCOCO dataset structure tips:")
+        print("- Standard structure: coco_dir/images/val2017/")
+        print("- Kaggle structure: coco_dir/val2017/")
+        print("- Annotations should be in coco_dir/annotations/")
+        print("\nExample usage:")
+        print("python evaluate_coco_simplified.py --coco-dir /path/to/coco --model-path ./models/best_model.pth --max-images 1000")
 
 if __name__ == "__main__":
     main() 
