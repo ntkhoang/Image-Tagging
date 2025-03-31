@@ -2,7 +2,7 @@ import os
 import argparse
 import torch
 import numpy as np
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, random_split
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 from sklearn.metrics import average_precision_score
@@ -12,7 +12,7 @@ from gcn_image_tagger_simplified import ImageGCNSimple
 
 def evaluate_model_on_voc(voc_dir, model_path=None, batch_size=16, 
                          device='cuda', max_images=None, image_size=224,
-                         num_workers=2, visualize=False):
+                         num_workers=2, visualize=False, split='test'):
     """
     Evaluate a trained ImageGCN model on VOC 2007 test set
     
@@ -25,6 +25,7 @@ def evaluate_model_on_voc(voc_dir, model_path=None, batch_size=16,
         image_size: Size of images for evaluation
         num_workers: Number of workers for data loading
         visualize: Whether to visualize results
+        split: Dataset split to evaluate on ('test', 'val', 'trainval')
         
     Returns:
         results: Dictionary with evaluation metrics
@@ -33,22 +34,72 @@ def evaluate_model_on_voc(voc_dir, model_path=None, batch_size=16,
     device = torch.device(device if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
     
-    # Get test dataset
-    test_dataset = get_voc_dataset(
-        voc_dir, 'test', 
-        image_size=image_size, 
-        max_images=max_images
-    )
+    # Check if test split exists
+    test_split_exists = False
+    test_split_file = os.path.join(voc_dir, 'ImageSets', 'Main', 'test.txt')
+    voc2007_dir = os.path.join(voc_dir, 'VOC2007')
+    if os.path.exists(voc2007_dir):
+        test_split_file = os.path.join(voc2007_dir, 'ImageSets', 'Main', 'test.txt')
+    
+    if os.path.exists(test_split_file):
+        test_split_exists = True
+        print(f"Found test split file: {test_split_file}")
+    else:
+        print(f"Test split file not found: {test_split_file}")
+        if split == 'test':
+            print("Falling back to 'val' split for evaluation")
+            split = 'val'
+    
+    # Get dataset for evaluation
+    try:
+        eval_dataset = get_voc_dataset(
+            voc_dir, split, 
+            image_size=image_size, 
+            max_images=max_images
+        )
+    except FileNotFoundError:
+        # If specified split is not found, try falling back to trainval and creating a split
+        if split in ['test', 'val']:
+            print(f"Split '{split}' not found, falling back to splitting trainval")
+            trainval_dataset = get_voc_dataset(
+                voc_dir, 'trainval', 
+                image_size=image_size, 
+                max_images=max_images
+            )
+            
+            # Split the trainval dataset (70/15/15)
+            train_size = int(0.7 * len(trainval_dataset))
+            val_size = int(0.15 * len(trainval_dataset))
+            test_size = len(trainval_dataset) - train_size - val_size
+            
+            if split == 'val':
+                # Use the validation portion
+                _, eval_split, _ = random_split(
+                    trainval_dataset, 
+                    [train_size, val_size, test_size],
+                    generator=torch.Generator().manual_seed(42)
+                )
+                eval_dataset = eval_split
+            else:  # split == 'test'
+                # Use the test portion
+                _, _, eval_split = random_split(
+                    trainval_dataset, 
+                    [train_size, val_size, test_size],
+                    generator=torch.Generator().manual_seed(42)
+                )
+                eval_dataset = eval_split
+        else:
+            raise
     
     # Create data loader
-    test_loader = DataLoader(
-        test_dataset, 
+    eval_loader = DataLoader(
+        eval_dataset, 
         batch_size=batch_size, 
         shuffle=False,
         num_workers=num_workers
     )
     
-    print(f"Evaluating on {len(test_dataset)} test images...")
+    print(f"Evaluating on {len(eval_dataset)} {split} images...")
     
     # Initialize model
     model = ImageGCNSimple(
@@ -79,7 +130,7 @@ def evaluate_model_on_voc(voc_dir, model_path=None, batch_size=16,
     all_labels = []
     
     with torch.no_grad():
-        for images, labels in tqdm(test_loader, desc="Evaluating"):
+        for images, labels in tqdm(eval_loader, desc="Evaluating"):
             images = images.to(device)
             
             # Forward pass
@@ -135,7 +186,7 @@ def evaluate_model_on_voc(voc_dir, model_path=None, batch_size=16,
     }
     
     # Print results
-    print("\nEvaluation Results:")
+    print(f"\nEvaluation Results on {split} set:")
     print(f"Accuracy: {accuracy:.4f}")
     print(f"Mean Precision: {np.mean(precision):.4f}")
     print(f"Mean Recall: {np.mean(recall):.4f}")
@@ -164,19 +215,19 @@ def evaluate_model_on_voc(voc_dir, model_path=None, batch_size=16,
         plt.bar(VOC_CLASSES, f1, alpha=0.7, label='F1')
         plt.xticks(rotation=90)
         plt.ylabel('Score')
-        plt.title('Per-class Performance')
+        plt.title(f'Per-class Performance on {split} set')
         plt.legend()
         plt.tight_layout()
-        plt.savefig('voc_class_metrics.png')
-        print(f"Per-class metrics visualization saved to voc_class_metrics.png")
+        plt.savefig(f'voc_{split}_class_metrics.png')
+        print(f"Per-class metrics visualization saved to voc_{split}_class_metrics.png")
         
         # Plot confusion matrix or distribution
         plt.figure(figsize=(10, 8))
         plt.matshow(np.corrcoef(all_labels.T), cmap='coolwarm')
         plt.colorbar()
         plt.title('Label Co-occurrence Matrix')
-        plt.savefig('voc_label_cooccurrence.png')
-        print(f"Label co-occurrence matrix saved to voc_label_cooccurrence.png")
+        plt.savefig(f'voc_{split}_label_cooccurrence.png')
+        print(f"Label co-occurrence matrix saved to voc_{split}_label_cooccurrence.png")
     
     return results
 
@@ -198,6 +249,8 @@ def main():
                         help='Number of workers for data loading')
     parser.add_argument('--visualize', action='store_true',
                         help='Visualize evaluation results')
+    parser.add_argument('--split', type=str, default='test',
+                        help='Dataset split to evaluate on (test, val, trainval)')
     
     args = parser.parse_args()
     
@@ -210,7 +263,8 @@ def main():
             max_images=args.max_images,
             image_size=args.image_size,
             num_workers=args.num_workers,
-            visualize=args.visualize
+            visualize=args.visualize,
+            split=args.split
         )
     except FileNotFoundError as e:
         print(f"Error: {e}")
@@ -222,7 +276,7 @@ def main():
         print("- Annotations/ - Directory with XML annotations")
         print("- ImageSets/Main/ - Directory with train/val/test splits")
         print("\nExample usage:")
-        print("python evaluate_voc.py --voc-dir /path/to/VOCdevkit/VOC2007 --model-path ./models/best_model_voc.pth")
+        print("python evaluate_voc.py --voc-dir /path/to/VOCdevkit/VOC2007 --model-path ./models/best_model_voc.pth --split val")
 
 if __name__ == "__main__":
     main() 

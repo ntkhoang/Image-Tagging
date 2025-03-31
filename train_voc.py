@@ -59,21 +59,49 @@ def train_model_on_voc(args):
         max_images=args.max_images
     )
     
-    # Get test dataset for evaluation
-    test_dataset = get_voc_dataset(
-        args.voc_dir, 'test', 
-        image_size=args.image_size, 
-        max_images=args.max_images
-    )
+    # Check if test split exists
+    test_split_exists = False
+    test_split_file = os.path.join(args.voc_dir, 'ImageSets', 'Main', 'test.txt')
+    voc2007_dir = os.path.join(args.voc_dir, 'VOC2007')
+    if os.path.exists(voc2007_dir):
+        test_split_file = os.path.join(voc2007_dir, 'ImageSets', 'Main', 'test.txt')
     
-    # Split trainval into train and validation sets (80/20)
-    train_size = int(0.8 * len(trainval_dataset))
-    val_size = len(trainval_dataset) - train_size
-    train_dataset, val_dataset = random_split(
-        trainval_dataset, 
-        [train_size, val_size],
-        generator=torch.Generator().manual_seed(42)
-    )
+    if os.path.exists(test_split_file):
+        test_split_exists = True
+        print(f"Found test split file: {test_split_file}")
+    else:
+        print(f"Test split file not found: {test_split_file}")
+        print("Will use a portion of the validation set as the test set")
+    
+    # Get test dataset if it exists, otherwise we'll split trainval further
+    test_dataset = None
+    if test_split_exists:
+        test_dataset = get_voc_dataset(
+            args.voc_dir, 'test', 
+            image_size=args.image_size, 
+            max_images=args.max_images
+        )
+    
+    # Split trainval into train, validation (and test if needed)
+    if test_split_exists:
+        # Split trainval into train and validation sets (80/20)
+        train_size = int(0.8 * len(trainval_dataset))
+        val_size = len(trainval_dataset) - train_size
+        train_dataset, val_dataset = random_split(
+            trainval_dataset, 
+            [train_size, val_size],
+            generator=torch.Generator().manual_seed(42)
+        )
+    else:
+        # Split trainval into train, validation, and test sets (70/15/15)
+        train_size = int(0.7 * len(trainval_dataset))
+        val_size = int(0.15 * len(trainval_dataset))
+        test_size = len(trainval_dataset) - train_size - val_size
+        train_dataset, val_dataset, test_dataset = random_split(
+            trainval_dataset, 
+            [train_size, val_size, test_size],
+            generator=torch.Generator().manual_seed(42)
+        )
     
     print(f"Train set: {len(train_dataset)} images")
     print(f"Validation set: {len(val_dataset)} images")

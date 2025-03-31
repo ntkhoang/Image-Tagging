@@ -6,6 +6,7 @@ from PIL import Image
 import torchvision.transforms as transforms
 from tqdm import tqdm
 from torch.utils.data import DataLoader
+from sklearn.metrics import average_precision_score
 
 from gcn_image_tagger_simplified import ImageGCNSimple, create_adjacency_matrix, ImageTaggingDataset, ImageGCNTrainer
 
@@ -191,14 +192,77 @@ def evaluate_model_on_coco(coco_dir, model_path=None, batch_size=8, device='cuda
     
     # Evaluate model
     print("Evaluating model on COCO val2017 dataset...")
-    results = trainer.evaluate(val_loader)  # No need for adjacency matrix
+    
+    # Collect predictions and ground truth for calculating mAP
+    all_preds = []
+    all_probs = []  # Store probability scores
+    all_labels = []
+    
+    model.eval()
+    with torch.no_grad():
+        for images, labels in tqdm(val_loader, desc="Evaluating"):
+            images = images.to(device)
+            labels = labels.to(device)
+            
+            # Forward pass
+            outputs = model(images)
+            probs = torch.sigmoid(outputs)
+            preds = probs > 0.5
+            
+            all_probs.append(probs.cpu().numpy())
+            all_preds.append(preds.cpu().numpy())
+            all_labels.append(labels.cpu().numpy())
+    
+    # Concatenate results
+    all_probs = np.vstack(all_probs)
+    all_preds = np.vstack(all_preds)
+    all_labels = np.vstack(all_labels)
+    
+    # Calculate metrics
+    accuracy = np.mean((all_preds == all_labels).flatten())
+    
+    # Per-class metrics
+    # Avoid division by zero
+    class_correct = np.sum(all_preds & (all_labels == 1), axis=0)
+    class_total_pred = np.sum(all_preds, axis=0)
+    class_total_true = np.sum(all_labels, axis=0)
+    
+    # Add epsilon to avoid division by zero
+    epsilon = 1e-10
+    precision = class_correct / (class_total_pred + epsilon)
+    recall = class_correct / (class_total_true + epsilon)
+    f1 = 2 * precision * recall / (precision + recall + epsilon)
+    
+    # Calculate mAP (mean Average Precision)
+    # For each class, compute average precision
+    ap_scores = []
+    for i in range(NUM_CLASSES):
+        if np.sum(all_labels[:, i]) > 0:  # Only calculate AP if class exists in test set
+            ap = average_precision_score(all_labels[:, i], all_probs[:, i])
+            ap_scores.append(ap)
+    
+    mAP = np.mean(ap_scores)
+    
+    # Collect results
+    results = {
+        'accuracy': accuracy,
+        'precision': np.mean(precision),
+        'recall': np.mean(recall),
+        'f1': np.mean(f1),
+        'mAP': mAP,
+        'per_class_precision': precision,
+        'per_class_recall': recall,
+        'per_class_f1': f1,
+        'per_class_ap': {category_names[i]: ap_scores[i] for i in range(len(ap_scores)) if np.sum(all_labels[:, i]) > 0}
+    }
     
     # Print results
     print("\nEvaluation Results:")
-    print(f"Accuracy: {results['accuracy']:.4f}")
+    print(f"Accuracy: {accuracy:.4f}")
     print(f"Precision: {results['precision']:.4f}")
     print(f"Recall: {results['recall']:.4f}")
     print(f"F1 Score: {results['f1']:.4f}")
+    print(f"mAP: {mAP:.4f}")
     
     # Print per-class results for top and bottom 5 classes
     per_class_f1 = results['per_class_f1']
