@@ -41,6 +41,8 @@ def parse_args():
                         help='Image size for training (smaller is faster)')
     parser.add_argument('--train-backbone', action='store_true',
                    help='Train all parameters including the backbone (ResNet/ViT)')
+    parser.add_argument('--train-half', action='store_true',
+                        help='Train only half of the model parameters (freeze the first half)')
     return parser.parse_args()
 
 def load_images_and_labels(data_dir):
@@ -338,10 +340,22 @@ def train_model(args):
         device=str(device)
     )
     model.to(device)
+
+    if args.train_half:
+        all_params = list(model.parameters())
+        split_index = len(all_params) // 2
+        for idx, param in enumerate(all_params):
+            # Freeze the first half; keep the rest trainable
+            if idx < split_index:
+                param.requires_grad = False
+        # Print updated trainable parameters count
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        #print(f"After freezing half, Trainable parameters: {trainable_params:,}")
     
     # Print model architecture and parameter count
-    total_params = sum(p.numel() for p in model.parameters())
-    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    else:
+        total_params = sum(p.numel() for p in model.parameters())
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Model Architecture: {model}")
     print(f"Total parameters: {total_params:,}")
     print(f"Trainable parameters: {trainable_params:,}")

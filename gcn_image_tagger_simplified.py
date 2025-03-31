@@ -45,11 +45,12 @@ class ImageGCNSimple(nn.Module):
     without PyTorch Geometric dependency
     """
     def __init__(self, num_classes, feature_dim=2048, hidden_dim=1024, dropout=0.5, 
-                 use_vit=False, device='cuda'):
+                 use_vit=False, device='cuda', train_backbone=False):
         super(ImageGCNSimple, self).__init__()
         self.device = device
         self.num_classes = num_classes
-        
+        self.train_backbone = train_backbone
+
         # Image feature extractor
         if use_vit:
             # Use Vision Transformer
@@ -64,9 +65,9 @@ class ImageGCNSimple(nn.Module):
             self.feature_extractor = nn.Sequential(*modules)
             self.feature_dim = 2048
         
-        # Freeze the feature extractor to speed up training
+        # Set trainability of the feature extractor
         for param in self.feature_extractor.parameters():
-            param.requires_grad = False
+            param.requires_grad = train_backbone
             
         # Use our simplified GCN implementation instead of TwoLayerGCN
         self.gcn = SimplifiedGCN(
@@ -85,14 +86,25 @@ class ImageGCNSimple(nn.Module):
     
     def extract_features(self, images):
         """
-        Extract image features from the feature extractor
+        Extract image features from the feature extractor.
+        If the backbone is frozen (train_backbone is False),
+        use torch.no_grad() to save memory.
         """
-        with torch.no_grad():  # No need to compute gradients for frozen parameters
+        if self.train_backbone:
+            # Backbone is trainable, so compute gradients normally.
             if isinstance(self.feature_extractor, nn.Sequential):
                 features = self.feature_extractor(images)
                 features = features.squeeze(-1).squeeze(-1)  # Remove spatial dimensions
             else:
                 features = self.feature_extractor(images)  # For ViT
+        else:
+            # Backbone is frozen, disable gradient computation.
+            with torch.no_grad():
+                if isinstance(self.feature_extractor, nn.Sequential):
+                    features = self.feature_extractor(images)
+                    features = features.squeeze(-1).squeeze(-1)  # Remove spatial dimensions
+                else:
+                    features = self.feature_extractor(images)  # For ViT
         return features
     
     def forward(self, images, adj_matrix=None):
