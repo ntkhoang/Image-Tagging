@@ -350,12 +350,12 @@ def train_model(args):
                 param.requires_grad = False
         # Print updated trainable parameters count
         trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-        #print(f"After freezing half, Trainable parameters: {trainable_params:,}")
-    
-    # Print model architecture and parameter count
     else:
-        total_params = sum(p.numel() for p in model.parameters())
         trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    
+    # Compute total parameter count for both cases
+    total_params = sum(p.numel() for p in model.parameters())
+    
     print(f"Model Architecture: {model}")
     print(f"Total parameters: {total_params:,}")
     print(f"Trainable parameters: {trainable_params:,}")
