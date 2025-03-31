@@ -39,6 +39,8 @@ def parse_args():
                         help='Maximum number of images to use (for quick testing)')
     parser.add_argument('--image-size', type=int, default=128,
                         help='Image size for training (smaller is faster)')
+    parser.add_argument('--train-backbone', action='store_true',
+                   help='Train all parameters including the backbone (ResNet/ViT)')
     return parser.parse_args()
 
 def load_images_and_labels(data_dir):
@@ -333,7 +335,7 @@ def train_model(args):
         hidden_dim=args.hidden_dim,
         dropout=args.dropout,
         use_vit=args.use_vit,
-        device=device
+        device=str(device)
     )
     model.to(device)
     
@@ -349,7 +351,7 @@ def train_model(args):
         model=model,
         learning_rate=args.lr,
         weight_decay=args.weight_decay,
-        device=device
+        device=str(device)
     )
     
     # Train model

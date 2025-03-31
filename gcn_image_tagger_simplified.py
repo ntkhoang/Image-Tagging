@@ -90,7 +90,7 @@ class ImageGCNSimple(nn.Module):
         with torch.no_grad():  # No need to compute gradients for frozen parameters
             if isinstance(self.feature_extractor, nn.Sequential):
                 features = self.feature_extractor(images)
-                features = features.squeeze(-1).squeeze(-1)  # Remove spatial dimensions
+                features = features.squeeze(-1) # Remove spatial dimensions
             else:
                 features = self.feature_extractor(images)  # For ViT
         return features
