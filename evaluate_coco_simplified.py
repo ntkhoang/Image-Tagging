@@ -27,31 +27,45 @@ def load_coco_data(coco_dir, split='val2017'):
     """
     # Try multiple possible directory structures
     possible_img_dirs = [
-        os.path.join(coco_dir, 'images', split),  # Standard: coco_dir/images/val2017
-        os.path.join(coco_dir, split),            # Kaggle: coco_dir/val2017
-        os.path.join(coco_dir),                   # All images in root
-        os.path.join(coco_dir, 'val2017')         # Specific case for validation
+        os.path.join(coco_dir, split),                        # Kaggle: coco_dir/val2017
+        os.path.join(coco_dir, 'coco2017', split),            # Kaggle nested: coco_dir/coco2017/val2017
+        os.path.join(coco_dir, 'images', split),              # Standard: coco_dir/images/val2017
+        os.path.join(coco_dir),                               # All images in root
     ]
+    
+    # Print possible directories for debugging
+    print(f"Looking for images in possible locations:")
+    for dir_path in possible_img_dirs:
+        print(f"  - {dir_path}")
     
     # Find the first valid image directory
     img_dir = None
     for dir_path in possible_img_dirs:
         if os.path.exists(dir_path) and os.path.isdir(dir_path):
             # Check if directory contains images
-            if any(f.endswith('.jpg') for f in os.listdir(dir_path)[:100] if os.path.isfile(os.path.join(dir_path, f))):
-                img_dir = dir_path
-                print(f"Found images in: {img_dir}")
-                break
+            try:
+                files = os.listdir(dir_path)[:100]
+                if any(f.endswith('.jpg') for f in files if os.path.isfile(os.path.join(dir_path, f))):
+                    img_dir = dir_path
+                    print(f"Found images in: {img_dir}")
+                    break
+            except Exception as e:
+                print(f"Error listing {dir_path}: {e}")
     
     if img_dir is None:
         raise FileNotFoundError(f"Could not find image directory for {split} in {coco_dir}")
     
     # Try multiple possible annotation file locations
     possible_ann_files = [
-        os.path.join(coco_dir, 'annotations', f'instances_{split}.json'),  # Standard
+        os.path.join(coco_dir, 'annotations', f'instances_{split}.json'),  # Standard: coco_dir/annotations
+        os.path.join(coco_dir, 'coco2017', 'annotations', f'instances_{split}.json'), # Nested
         os.path.join(coco_dir, f'instances_{split}.json'),                  # Root level
-        os.path.join(coco_dir, 'annotations', 'instances_val2017.json')    # Fixed val file
     ]
+    
+    # Print possible annotation files for debugging
+    print(f"Looking for annotation files in possible locations:")
+    for file_path in possible_ann_files:
+        print(f"  - {file_path}")
     
     # Find the first valid annotation file
     ann_file = None
