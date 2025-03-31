@@ -1,101 +1,114 @@
-# Image Tagging Project
+# GCN Image Tagger
 
-## Setup with uv
+A Graph Convolutional Network (GCN) based image tagging tool that identifies objects in images.
 
-This project uses `uv` for Python package management and virtual environments. `uv` is a fast, user-friendly alternative to pip and venv.
+## Features
 
-### Installing uv
+- Multi-label image classification using GCN
+- Pre-trained feature extractors (ResNet-50, ViT)
+- Command-line interface for batch processing
+- Web interface for interactive use
+- Support for VOC and COCO datasets
 
-If you don't have uv installed, you can install it:
+## Installation
 
-**Windows (PowerShell):**
-```powershell
-iwr -Uri https://github.com/astral-sh/uv/releases/latest/download/uv-installer.ps1 -UseBasicParsing | iex
-```
+1. Clone this repository:
+   ```
+   git clone https://github.com/yourusername/Image-Tagging.git
+   cd Image-Tagging
+   ```
 
-**macOS/Linux:**
+2. Install required packages:
+   ```
+   pip install torch torchvision pillow numpy tqdm
+   ```
+
+3. For the web interface, install Gradio:
+   ```
+   pip install gradio
+   ```
+
+## Usage
+
+### Command-line Interface
+
+To tag a single image:
+
 ```bash
-curl -LsSf https://github.com/astral-sh/uv/releases/latest/download/uv-installer.sh | sh
+python run.py --image path/to/your/image.jpg --model path/to/your/model.pth
 ```
 
-### Creating a Virtual Environment
+Options:
+- `--image`: Path to input image (required)
+- `--model`: Path to trained model weights (required)
+- `--dataset`: Dataset for class names (`voc` or `coco`, default: `voc`)
+- `--threshold`: Confidence threshold for predictions (default: 0.5)
+- `--use-vit`: Use ViT backbone (default: False)
 
-1. Create a new virtual environment in the project directory:
-   ```
-   uv venv
-   ```
-   This will create a `.venv` directory in your project.
+### Web Interface
 
-2. Activate the virtual environment:
+To launch the web interface:
 
-   **Windows (PowerShell):**
-   ```powershell
-   .\.venv\Scripts\Activate.ps1
-   ```
-
-   **Windows (Command Prompt):**
-   ```cmd
-   .\.venv\Scripts\activate.bat
-   ```
-
-   **macOS/Linux:**
-   ```bash
-   source .venv/bin/activate
-   ```
-
-3. Install dependencies from requirements.txt:
-   ```
-   uv pip install -r requirements.txt
-   ```
-
-## Using MS COCO Dataset
-
-### Download COCO Dataset
-
-1. Download the COCO 2017 dataset:
-   - [Train images (18GB)](http://images.cocodataset.org/zips/train2017.zip)
-   - [Validation images (1GB)](http://images.cocodataset.org/zips/val2017.zip)
-   - [Annotations (241MB)](http://images.cocodataset.org/annotations/annotations_trainval2017.zip)
-
-2. Extract these files to create the following directory structure:
-   ```
-   /path/to/coco/
-   ├── annotations/
-   │   ├── instances_train2017.json
-   │   └── instances_val2017.json
-   ├── train2017/
-   │   ├── 000000000001.jpg
-   │   └── ...
-   └── val2017/
-       ├── 000000000001.jpg
-       └── ...
-   ```
-
-### Creating Adjacency Matrix
-
-For ML-GCN to work, you need to create an adjacency matrix based on label co-occurrences:
-
-1. Run the preprocessing script to generate the adjacency matrix:
-   ```
-   python generate_adj.py --data /path/to/coco/
-   ```
-   This will create a file at `data/adj_matrix.pkl`.
-
-2. If you don't have the preprocessing script, you can also download a pre-computed adjacency matrix from:
-   https://github.com/Megvii-Nanjing/ML-GCN/tree/master/data
-
-### Running the Training
-
-Run the training with:
-```
-python main.py --data /path/to/coco/ --batch-size 16 --image-size 448
+```bash
+python run.py --model path/to/your/model.pth --web
 ```
 
-For evaluation only:
-```
-python main.py --data /path/to/coco/ --evaluate --resume checkpoint/model_best.pth.tar
+Or simply omit the `--image` parameter to automatically launch the web interface:
+
+```bash
+python run.py --model path/to/your/model.pth
 ```
 
-## Project Description
+The web interface allows you to:
+- Upload images from your computer
+- See prediction results instantly
+- Adjust confidence threshold
+- View confidence scores for each detected class
 
-This project implements an ML-GCN (Multi-Label Graph Convolutional Network) model for image tagging. It uses ResNet-101 as the backbone for feature extraction and a Graph Convolutional Network to model label relationships.
+## Training Your Own Models
+
+Refer to our training scripts for training on your own data:
+
+- For VOC dataset: `train_voc.py`
+- For COCO dataset: `train_model_simplified.py`
+- For evaluating models: `evaluate_voc.py` or `evaluate_coco_simplified.py`
+
+Example training command:
+
+```bash
+python train_voc.py --voc-dir /path/to/VOCdevkit/VOC2007 --batch-size 16 --epochs 30 --save-dir ./models
+```
+
+## Model Architecture
+
+Our model combines:
+- Pre-trained backbone (ResNet-50 or Vision Transformer)
+- Graph Convolutional Network for modeling label relationships
+- Multi-label classification head
+
+## Example
+
+```bash
+# Tag an image with VOC classes
+python run.py --image examples/dog.jpg --model models/best_model_voc.pth --dataset voc
+
+# Tag an image with COCO classes
+python run.py --image examples/person.jpg --model models/best_model_coco.pth --dataset coco --threshold 0.3
+
+# Launch web interface
+python run.py --model models/best_model_voc.pth --web
+```
+
+## Adding Your Own Images to Examples
+
+You can add your own example images to the `examples/` directory:
+
+```
+examples/
+  ├── dog.jpg
+  ├── cat.jpg
+  ├── car.jpg
+  └── your_image.jpg
+```
+
+These will automatically appear in the web interface as example images.
