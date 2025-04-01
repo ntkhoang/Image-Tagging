@@ -49,6 +49,11 @@ def train_model_on_voc(args):
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
     
+    # Check for multiple GPUs
+    num_gpus = torch.cuda.device_count()
+    print(f"Number of available GPUs: {num_gpus}")
+    use_multi_gpu = num_gpus > 1 and args.device == 'cuda'
+    
     # Create save directory if it doesn't exist
     os.makedirs(args.save_dir, exist_ok=True)
     
@@ -107,10 +112,16 @@ def train_model_on_voc(args):
     print(f"Validation set: {len(val_dataset)} images")
     print(f"Test set: {len(test_dataset)} images")
     
+    # Adjust batch size for multi-GPU training
+    effective_batch_size = args.batch_size
+    if use_multi_gpu:
+        effective_batch_size = args.batch_size * num_gpus
+        print(f"Using effective batch size of {effective_batch_size} with {num_gpus} GPUs")
+    
     # Create data loaders
     train_loader = DataLoader(
         train_dataset, 
-        batch_size=args.batch_size, 
+        batch_size=effective_batch_size, 
         shuffle=True, 
         num_workers=args.num_workers, 
         pin_memory=True
@@ -118,7 +129,7 @@ def train_model_on_voc(args):
     
     val_loader = DataLoader(
         val_dataset, 
-        batch_size=args.batch_size, 
+        batch_size=effective_batch_size, 
         shuffle=False, 
         num_workers=args.num_workers, 
         pin_memory=True
@@ -126,7 +137,7 @@ def train_model_on_voc(args):
     
     test_loader = DataLoader(
         test_dataset, 
-        batch_size=args.batch_size, 
+        batch_size=effective_batch_size, 
         shuffle=False, 
         num_workers=args.num_workers, 
         pin_memory=True
@@ -150,6 +161,11 @@ def train_model_on_voc(args):
         device=device
     )
     model.to(device)
+    
+    # Wrap model with DataParallel if multiple GPUs are available
+    if use_multi_gpu:
+        print("Using DataParallel for multi-GPU training")
+        model = torch.nn.DataParallel(model)
     
     # Print model architecture and parameter count
     total_params = sum(p.numel() for p in model.parameters())
@@ -186,7 +202,11 @@ def train_model_on_voc(args):
         if val_f1 > best_val_f1:
             best_val_f1 = val_f1
             model_path = os.path.join(args.save_dir, 'best_model_voc.pth')
-            torch.save(model.state_dict(), model_path)
+            # Save the model state dict, handling DataParallel case
+            if use_multi_gpu:
+                torch.save(model.module.state_dict(), model_path)
+            else:
+                torch.save(model.state_dict(), model_path)
             print(f"  New best model saved to {model_path}")
             
         # Save checkpoint every 5 epochs
@@ -194,7 +214,7 @@ def train_model_on_voc(args):
             checkpoint_path = os.path.join(args.save_dir, f'checkpoint_voc_epoch_{epoch+1}.pth')
             torch.save({
                 'epoch': epoch + 1,
-                'model_state_dict': model.state_dict(),
+                'model_state_dict': model.module.state_dict() if use_multi_gpu else model.state_dict(),
                 'optimizer_state_dict': trainer.optimizer.state_dict(),
                 'best_val_f1': best_val_f1,
             }, checkpoint_path)
@@ -203,7 +223,12 @@ def train_model_on_voc(args):
     # Evaluate on test set using best model
     print("\nEvaluating best model on test set...")
     best_model_path = os.path.join(args.save_dir, 'best_model_voc.pth')
-    model.load_state_dict(torch.load(best_model_path))
+    
+    # Reload model for evaluation
+    if use_multi_gpu:
+        model.module.load_state_dict(torch.load(best_model_path))
+    else:
+        model.load_state_dict(torch.load(best_model_path))
     
     test_results = trainer.evaluate(test_loader)
     print(f"Test Results:")
