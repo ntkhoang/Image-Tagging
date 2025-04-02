@@ -45,7 +45,12 @@ def load_model(model_path, num_classes=20, use_vit=False):
     print(f"Loading model from {model_path}")
     try:
         # First try loading as is (normal model save)
-        state_dict = torch.load(model_path, map_location=device)
+        state_dict = torch.load(model_path, map_location=device, weights_only=True)
+        
+        # Check if this is a checkpoint file with multiple dictionaries
+        if 'model_state_dict' in state_dict:
+            print("Detected checkpoint file, extracting model state dictionary")
+            state_dict = state_dict['model_state_dict']
         
         # Check if the state_dict has DataParallel prefix 'module.' in keys
         is_data_parallel = False
@@ -63,6 +68,7 @@ def load_model(model_path, num_classes=20, use_vit=False):
             state_dict = new_state_dict
             
         model.load_state_dict(state_dict)
+        print("Model loaded successfully")
     except Exception as e:
         print(f"Error loading model: {e}")
         print("Using randomly initialized weights")

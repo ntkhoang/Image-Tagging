@@ -187,6 +187,11 @@ def evaluate_model_on_coco(coco_dir, model_path=None, batch_size=8, device='cuda
             # First try loading as is (normal model save)
             state_dict = torch.load(model_path, map_location=device, weights_only=True)
             
+            # Check if this is a checkpoint file with multiple dictionaries
+            if 'model_state_dict' in state_dict:
+                print("Detected checkpoint file, extracting model state dictionary")
+                state_dict = state_dict['model_state_dict']
+            
             # Check if the state_dict has DataParallel prefix 'module.' in keys
             is_data_parallel = False
             if len(list(state_dict.keys())) > 0:
@@ -203,6 +208,7 @@ def evaluate_model_on_coco(coco_dir, model_path=None, batch_size=8, device='cuda
                 state_dict = new_state_dict
                 
             model.load_state_dict(state_dict)
+            print("Model loaded successfully")
         except Exception as e:
             print(f"Error loading model: {e}")
             print("Using randomly initialized model.")
