@@ -98,17 +98,3 @@ python run.py --image examples/person.jpg --model models/best_model_coco.pth --d
 # Launch web interface
 python run.py --model models/best_model_voc.pth --web
 ```
-
-## Adding Your Own Images to Examples
-
-You can add your own example images to the `examples/` directory:
-
-```
-examples/
-  ├── dog.jpg
-  ├── cat.jpg
-  ├── car.jpg
-  └── your_image.jpg
-```
-
-These will automatically appear in the web interface as example images.
