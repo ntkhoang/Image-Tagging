@@ -114,7 +114,25 @@ def evaluate_model_on_voc(voc_dir, model_path=None, batch_size=16,
     if model_path:
         print(f"Loading model weights from {model_path}")
         try:
-            model.load_state_dict(torch.load(model_path, map_location=device))
+            # First try loading as is (normal model save)
+            state_dict = torch.load(model_path, map_location=device, weights_only=True)
+            
+            # Check if the state_dict has DataParallel prefix 'module.' in keys
+            is_data_parallel = False
+            if len(list(state_dict.keys())) > 0:
+                is_data_parallel = list(state_dict.keys())[0].startswith('module.')
+                
+            if is_data_parallel:
+                print("Detected DataParallel model, removing 'module.' prefix")
+                # Create new OrderedDict without the 'module.' prefix
+                from collections import OrderedDict
+                new_state_dict = OrderedDict()
+                for k, v in state_dict.items():
+                    name = k[7:] if k.startswith('module.') else k  # remove 'module.' prefix
+                    new_state_dict[name] = v
+                state_dict = new_state_dict
+                
+            model.load_state_dict(state_dict)
         except Exception as e:
             print(f"Error loading model: {e}")
             print("Continuing with randomly initialized weights...")
