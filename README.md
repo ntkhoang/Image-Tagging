@@ -70,13 +70,19 @@ The web interface allows you to:
 Refer to our training scripts for training on your own data:
 
 - For VOC dataset: `train_voc.py`
-- For COCO dataset: `train_model_simplified.py`
-- For evaluating models: `evaluate_voc.py` or `evaluate_coco_simplified.py`
+- For COCO dataset: `train_coco.py`
+- For evaluating models: `evaluate_voc.py` or `evaluate_coco.py`
 
 Example training command:
 
 ```bash
 python train_voc.py --voc-dir /path/to/VOCdevkit/VOC2007 --batch-size 16 --epochs 30 --save-dir ./models
+```
+
+Example evaluating command:
+
+```bash
+python evaluate_coco.py --coco-dir /path/to/COCO2017 --model-path /pretrained/model/path --device cuda
 ```
 
 ## Model Architecture
