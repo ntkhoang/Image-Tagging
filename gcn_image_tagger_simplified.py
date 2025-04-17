@@ -45,17 +45,81 @@ class ImageGCNSimple(nn.Module):
     without PyTorch Geometric dependency
     """
     def __init__(self, num_classes, feature_dim=2048, hidden_dim=1024, dropout=0.5, 
-                 use_vit=False, device='cuda', train_backbone=False):
+                 use_vit=False, device='cuda', train_backbone=False, img_size=224):
         super(ImageGCNSimple, self).__init__()
         self.device = device
         self.num_classes = num_classes
         self.train_backbone = train_backbone
+        self.img_size = img_size
 
         # Image feature extractor
         if use_vit:
             # Use Vision Transformer
-            vit = models.vit_b_16(weights='DEFAULT')
-            vit.heads = nn.Identity()  # Remove classification head
+            if img_size == 224:
+                # Standard ViT size
+                vit = models.vit_b_16(weights='DEFAULT')
+                vit.heads = nn.Identity()  # Remove classification head
+            else:
+                # Custom size ViT with position embedding interpolation
+                print(f"Creating ViT with custom image size: {img_size}x{img_size}")
+                # Start with pretrained model
+                vit = models.vit_b_16(weights='DEFAULT')
+                
+                # We need to patch the positional embedding for the new size
+                # The default is based on 224x224 images, we need to interpolate for other sizes
+                
+                # Using vision_transformer module for custom modifications
+                # This is a hacky way to remove the size assertion in the ViT forward method
+                # and interpolate the position embeddings
+                
+                # Replace the encoder's forward method to allow for interpolation
+                # This is inspired by the official implementation that allows for interpolation
+                original_forward = vit.encoder.forward
+                
+                def new_forward(self, x):
+                    # Get the input sequence
+                    batch_size, seq_len, dim = x.shape
+                    
+                    # Add position embeddings
+                    # Interpolate positional embedding for different sequence length
+                    # (due to different image size)
+                    pos_embed = self.pos_embedding
+                    N = pos_embed.shape[1] - 1  # Number of position embeddings excluding CLS token
+                    n = seq_len - 1  # Number of patches excluding CLS token
+                    
+                    if N != n:
+                        # We need to interpolate the positional embeddings
+                        class_pos_embed = pos_embed[:, 0]
+                        patch_pos_embed = pos_embed[:, 1:]
+                        
+                        # Interpolate patch position embeddings
+                        dim = patch_pos_embed.shape[-1]
+                        patch_pos_embed = patch_pos_embed.reshape(1, int(N**0.5), int(N**0.5), dim)
+                        patch_pos_embed = torch.nn.functional.interpolate(
+                            patch_pos_embed.permute(0, 3, 1, 2),
+                            size=(int(n**0.5), int(n**0.5)),
+                            mode='bicubic',
+                            align_corners=False
+                        ).permute(0, 2, 3, 1).reshape(1, n, dim)
+                        
+                        # Combine with class token position embedding
+                        pos_embed = torch.cat([class_pos_embed.unsqueeze(0).unsqueeze(0), 
+                                              patch_pos_embed], dim=1)
+                    
+                    # Use the original forward but with our interpolated position embeddings
+                    x = self.dropout(x + pos_embed)
+                    x = self.layers(x)
+                    return x
+                
+                # Replace the forward method
+                import types
+                vit.encoder.forward = types.MethodType(new_forward, vit.encoder)
+                
+                # Also replace the head for feature extraction
+                vit.heads = nn.Identity()  # Remove classification head
+                
+                print("Custom ViT with position embedding interpolation created successfully")
+                
             self.feature_extractor = vit
             self.feature_dim = 768
         else:

@@ -112,6 +112,13 @@ def train_model_on_voc_vit(args):
     print(f"Validation set: {len(val_dataset)} images")
     print(f"Test set: {len(test_dataset)} images")
     
+    # Add custom ViT model for non-standard sizes
+    img_size = args.image_size
+    if img_size != 224:
+        # If image size isn't the standard 224, we need to modify ViT loading in ImageGCNSimple
+        print(f"Using custom Vision Transformer with image size {img_size}x{img_size}")
+        print(f"Note: Using a non-standard image size with ViT requires position embedding interpolation")
+    
     # Adjust batch size for multi-GPU training
     effective_batch_size = args.batch_size
     if use_multi_gpu:
@@ -159,7 +166,8 @@ def train_model_on_voc_vit(args):
         dropout=args.dropout,
         use_vit=True,  # Force ViT usage
         device=device,
-        train_backbone=args.train_backbone
+        train_backbone=args.train_backbone,
+        img_size=img_size  # Pass the image size
     )
     model.to(device)
     

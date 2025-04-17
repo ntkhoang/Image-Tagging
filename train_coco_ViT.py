@@ -204,6 +204,13 @@ def train_model_on_coco_vit(args):
     img_size = args.image_size
     print(f"Using image size: {img_size}x{img_size}")
     
+    # Add custom ViT model for non-standard sizes
+    if img_size != 224:
+        # If image size isn't the standard 224, we need to modify ViT loading in ImageGCNSimple
+        # We'll need to modify our model to handle this
+        print(f"Using custom Vision Transformer with image size {img_size}x{img_size}")
+        print(f"Note: Using a non-standard image size with ViT requires position embedding interpolation")
+    
     train_transform = transforms.Compose([
         transforms.Resize((img_size, img_size)),
         transforms.RandomHorizontalFlip(),
@@ -250,7 +257,8 @@ def train_model_on_coco_vit(args):
         dropout=args.dropout,
         use_vit=True,  # Force ViT usage
         device=str(device),
-        train_backbone=args.train_backbone
+        train_backbone=args.train_backbone,
+        img_size=img_size  # Pass the image size
     )
     model.to(device)
     
