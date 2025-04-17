@@ -8,6 +8,7 @@ from tqdm import tqdm
 import torchvision.models as models
 import torchvision.transforms as transforms
 from torch.utils.data import Dataset, DataLoader
+from functools import partial
 
 # Import GCN components from the gcn folder
 from gcn.model import TwoLayerGCN
@@ -63,86 +64,69 @@ class ImageGCNSimple(nn.Module):
                 # Custom size ViT with position embedding interpolation
                 print(f"Creating custom ViT with image size: {img_size}x{img_size}")
                 
-                # First, we get the pretrained model
-                vit = models.vit_b_16(weights='DEFAULT')
+                # Create a new model from scratch with the custom image size
+                # This avoids the size check issues completely
+                import torchvision.models.vision_transformer as vit_module
                 
-                # We need to modify the model to accept a different input size
-                # 1. Change the image size in the model
-                vit.image_size = img_size
+                # Initialize a ViT model with the custom image size
+                vit = vit_module.VisionTransformer(
+                    image_size=img_size,
+                    patch_size=16,
+                    num_layers=12,
+                    num_heads=12,
+                    hidden_dim=768,
+                    mlp_dim=3072,
+                    dropout=0.0,
+                    attention_dropout=0.0,
+                    num_classes=1000,
+                    representation_size=None,
+                    norm_layer=partial(nn.LayerNorm, eps=1e-6),
+                )
                 
-                # 2. Modify the patch embedding to handle the new image size
-                # The number of patches will be different with the new image size
-                # but the patch size remains the same (16x16)
+                # Load pretrained weights
+                pretrained = models.vit_b_16(weights='DEFAULT')
                 
-                # Calculate the new sequence length
-                patch_size = vit.patch_size
-                num_patches = (img_size // patch_size) ** 2
+                # Load weights that match in size and update positional embeddings
+                pretrained_state = pretrained.state_dict()
+                model_state = vit.state_dict()
                 
-                # 3. Update positional embeddings for the encoder
-                # Get the current positional embedding
-                pos_embed = vit.encoder.pos_embedding
+                # Copy matching parameters
+                for name, param in pretrained_state.items():
+                    if name in model_state and name != "encoder.pos_embedding":
+                        if param.shape == model_state[name].shape:
+                            model_state[name].copy_(param)
+                        else:
+                            print(f"Shape mismatch for {name}, skipping")
                 
-                # Separate class token and patch tokens
-                class_pos_embed = pos_embed[:, 0:1]  # Class token positional embedding
-                patch_pos_embed = pos_embed[:, 1:]   # Patch tokens positional embeddings
+                # Handle positional embeddings separately with interpolation
+                pos_embed_pretrained = pretrained_state["encoder.pos_embedding"]
+                pos_embed_new = model_state["encoder.pos_embedding"]
                 
-                # Compute the number of patches in the original model
-                num_patches_orig = patch_pos_embed.shape[1]
-                orig_size = int(num_patches_orig ** 0.5)
+                # Class token and positional tokens
+                cls_token_pretrained = pos_embed_pretrained[:, 0:1]
+                pos_tokens_pretrained = pos_embed_pretrained[:, 1:]
                 
-                if num_patches != num_patches_orig:
-                    # Resize the positional embeddings to match the new number of patches
-                    # Reshape to a grid
-                    patch_pos_embed = patch_pos_embed.reshape(1, orig_size, orig_size, -1)
-                    
-                    # Interpolate to the new grid size
-                    new_size = img_size // patch_size
-                    patch_pos_embed = patch_pos_embed.permute(0, 3, 1, 2)  # [1, dim, h, w]
-                    patch_pos_embed = nn.functional.interpolate(
-                        patch_pos_embed, 
-                        size=(new_size, new_size), 
-                        mode='bicubic', 
-                        align_corners=False
-                    )
-                    patch_pos_embed = patch_pos_embed.permute(0, 2, 3, 1)  # [1, h, w, dim]
-                    patch_pos_embed = patch_pos_embed.reshape(1, num_patches, -1)
-                    
-                    # Create new positional embedding
-                    new_pos_embed = torch.cat([class_pos_embed, patch_pos_embed], dim=1)
-                    
-                    # Update the positional embedding
-                    vit.encoder.pos_embedding = nn.Parameter(new_pos_embed)
+                # Compute old and new grid sizes
+                old_grid_size = int(np.sqrt(pos_tokens_pretrained.shape[1]))
+                new_grid_size = int(np.sqrt(pos_embed_new.shape[1] - 1))  # -1 for cls token
                 
-                # Now we need to patch the _process_input method in the ViT model to bypass the size check
-                original_process_input = vit._process_input
+                # Interpolate positional tokens to new size
+                pos_tokens_pretrained = pos_tokens_pretrained.reshape(1, old_grid_size, old_grid_size, -1).permute(0, 3, 1, 2)
+                pos_tokens_new = F.interpolate(
+                    pos_tokens_pretrained, 
+                    size=(new_grid_size, new_grid_size), 
+                    mode='bicubic', 
+                    align_corners=False
+                ).permute(0, 2, 3, 1).reshape(1, new_grid_size * new_grid_size, -1)
                 
-                def new_process_input(self, x):
-                    # Skip the size check but keep the rest of the function
-                    n, c, h, w = x.shape
-                    p = self.patch_size
-                    
-                    # We just ensure divisibility and reshape
-                    torch._assert(h % p == 0, f"Input image height {h} is not divisible by patch size {p}!")
-                    torch._assert(w % p == 0, f"Input image width {w} is not divisible by patch size {p}!")
-                    
-                    # Actually now using the current image size instead of the original 224
-                    #torch._assert(h == self.image_size, f"Wrong image height! Expected {self.image_size} but got {h}!")
-                    #torch._assert(w == self.image_size, f"Wrong image width! Expected {self.image_size} but got {w}!")
-                    
-                    # Extract patches
-                    x = self.conv_proj(x)  # Shape: [batch_size, hidden_dim, grid_size, grid_size]
-                    x = x.reshape(n, self.hidden_dim, -1).permute(0, 2, 1)  # Shape: [batch_size, num_patches, hidden_dim]
-                    
-                    # Add class token
-                    x = torch.cat([self.class_token.expand(n, -1, -1), x], dim=1)
-                    
-                    return x
+                # Combine class token with new positional tokens
+                new_pos_embed = torch.cat([cls_token_pretrained, pos_tokens_new], dim=1)
+                model_state["encoder.pos_embedding"].copy_(new_pos_embed)
                 
-                # Replace the method
-                import types
-                vit._process_input = types.MethodType(new_process_input, vit)
+                print(f"Position embedding shape: {model_state['encoder.pos_embedding'].shape}")
+                print(f"Expected input sequence length: {model_state['encoder.pos_embedding'].shape[1]}")
                 
-                # Replace the head for feature extraction
+                # Replace the head with identity for feature extraction
                 vit.heads = nn.Identity()
                 
                 print("Successfully created custom ViT with size", img_size)
