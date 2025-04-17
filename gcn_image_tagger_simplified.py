@@ -61,64 +61,91 @@ class ImageGCNSimple(nn.Module):
                 vit.heads = nn.Identity()  # Remove classification head
             else:
                 # Custom size ViT with position embedding interpolation
-                print(f"Creating ViT with custom image size: {img_size}x{img_size}")
-                # Start with pretrained model
+                print(f"Creating custom ViT with image size: {img_size}x{img_size}")
+                
+                # First, we get the pretrained model
                 vit = models.vit_b_16(weights='DEFAULT')
                 
-                # We need to patch the positional embedding for the new size
-                # The default is based on 224x224 images, we need to interpolate for other sizes
+                # We need to modify the model to accept a different input size
+                # 1. Change the image size in the model
+                vit.image_size = img_size
                 
-                # Using vision_transformer module for custom modifications
-                # This is a hacky way to remove the size assertion in the ViT forward method
-                # and interpolate the position embeddings
+                # 2. Modify the patch embedding to handle the new image size
+                # The number of patches will be different with the new image size
+                # but the patch size remains the same (16x16)
                 
-                # Replace the encoder's forward method to allow for interpolation
-                # This is inspired by the official implementation that allows for interpolation
-                original_forward = vit.encoder.forward
+                # Calculate the new sequence length
+                patch_size = vit.patch_size
+                num_patches = (img_size // patch_size) ** 2
                 
-                def new_forward(self, x):
-                    # Get the input sequence
-                    batch_size, seq_len, dim = x.shape
+                # 3. Update positional embeddings for the encoder
+                # Get the current positional embedding
+                pos_embed = vit.encoder.pos_embedding
+                
+                # Separate class token and patch tokens
+                class_pos_embed = pos_embed[:, 0:1]  # Class token positional embedding
+                patch_pos_embed = pos_embed[:, 1:]   # Patch tokens positional embeddings
+                
+                # Compute the number of patches in the original model
+                num_patches_orig = patch_pos_embed.shape[1]
+                orig_size = int(num_patches_orig ** 0.5)
+                
+                if num_patches != num_patches_orig:
+                    # Resize the positional embeddings to match the new number of patches
+                    # Reshape to a grid
+                    patch_pos_embed = patch_pos_embed.reshape(1, orig_size, orig_size, -1)
                     
-                    # Add position embeddings
-                    # Interpolate positional embedding for different sequence length
-                    # (due to different image size)
-                    pos_embed = self.pos_embedding
-                    N = pos_embed.shape[1] - 1  # Number of position embeddings excluding CLS token
-                    n = seq_len - 1  # Number of patches excluding CLS token
+                    # Interpolate to the new grid size
+                    new_size = img_size // patch_size
+                    patch_pos_embed = patch_pos_embed.permute(0, 3, 1, 2)  # [1, dim, h, w]
+                    patch_pos_embed = nn.functional.interpolate(
+                        patch_pos_embed, 
+                        size=(new_size, new_size), 
+                        mode='bicubic', 
+                        align_corners=False
+                    )
+                    patch_pos_embed = patch_pos_embed.permute(0, 2, 3, 1)  # [1, h, w, dim]
+                    patch_pos_embed = patch_pos_embed.reshape(1, num_patches, -1)
                     
-                    if N != n:
-                        # We need to interpolate the positional embeddings
-                        class_pos_embed = pos_embed[:, 0]
-                        patch_pos_embed = pos_embed[:, 1:]
-                        
-                        # Interpolate patch position embeddings
-                        dim = patch_pos_embed.shape[-1]
-                        patch_pos_embed = patch_pos_embed.reshape(1, int(N**0.5), int(N**0.5), dim)
-                        patch_pos_embed = torch.nn.functional.interpolate(
-                            patch_pos_embed.permute(0, 3, 1, 2),
-                            size=(int(n**0.5), int(n**0.5)),
-                            mode='bicubic',
-                            align_corners=False
-                        ).permute(0, 2, 3, 1).reshape(1, n, dim)
-                        
-                        # Combine with class token position embedding
-                        pos_embed = torch.cat([class_pos_embed.unsqueeze(0).unsqueeze(0), 
-                                              patch_pos_embed], dim=1)
+                    # Create new positional embedding
+                    new_pos_embed = torch.cat([class_pos_embed, patch_pos_embed], dim=1)
                     
-                    # Use the original forward but with our interpolated position embeddings
-                    x = self.dropout(x + pos_embed)
-                    x = self.layers(x)
+                    # Update the positional embedding
+                    vit.encoder.pos_embedding = nn.Parameter(new_pos_embed)
+                
+                # Now we need to patch the _process_input method in the ViT model to bypass the size check
+                original_process_input = vit._process_input
+                
+                def new_process_input(self, x):
+                    # Skip the size check but keep the rest of the function
+                    n, c, h, w = x.shape
+                    p = self.patch_size
+                    
+                    # We just ensure divisibility and reshape
+                    torch._assert(h % p == 0, f"Input image height {h} is not divisible by patch size {p}!")
+                    torch._assert(w % p == 0, f"Input image width {w} is not divisible by patch size {p}!")
+                    
+                    # Actually now using the current image size instead of the original 224
+                    #torch._assert(h == self.image_size, f"Wrong image height! Expected {self.image_size} but got {h}!")
+                    #torch._assert(w == self.image_size, f"Wrong image width! Expected {self.image_size} but got {w}!")
+                    
+                    # Extract patches
+                    x = self.conv_proj(x)  # Shape: [batch_size, hidden_dim, grid_size, grid_size]
+                    x = x.reshape(n, self.hidden_dim, -1).permute(0, 2, 1)  # Shape: [batch_size, num_patches, hidden_dim]
+                    
+                    # Add class token
+                    x = torch.cat([self.class_token.expand(n, -1, -1), x], dim=1)
+                    
                     return x
                 
-                # Replace the forward method
+                # Replace the method
                 import types
-                vit.encoder.forward = types.MethodType(new_forward, vit.encoder)
+                vit._process_input = types.MethodType(new_process_input, vit)
                 
-                # Also replace the head for feature extraction
-                vit.heads = nn.Identity()  # Remove classification head
+                # Replace the head for feature extraction
+                vit.heads = nn.Identity()
                 
-                print("Custom ViT with position embedding interpolation created successfully")
+                print("Successfully created custom ViT with size", img_size)
                 
             self.feature_extractor = vit
             self.feature_dim = 768

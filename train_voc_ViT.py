@@ -36,7 +36,7 @@ def parse_args():
     parser.add_argument('--max-images', type=int, default=None,
                         help='Maximum number of images to use (for quick testing)')
     parser.add_argument('--image-size', type=int, default=224,
-                        help='Image size for training')
+                        help='Image size for training (can use 224, 384, 448, etc. for ViT)')
     parser.add_argument('--train-backbone', action='store_true',
                         help='Train ViT backbone parameters (increases GPU memory usage)')
     return parser.parse_args()
