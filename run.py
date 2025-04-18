@@ -11,14 +11,10 @@ from gcn_image_tagger_simplified import ImageGCNSimple
 # Set the default device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Define default transforms for inference
-transform = transforms.Compose([
-    transforms.Resize((224, 224)),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-])
+# Define transforms will be updated based on image_size parameter
+transform = None
 
-def load_model(model_path, num_classes=20, use_vit=False):
+def load_model(model_path, num_classes=20, use_vit=False, image_size=224):
     """
     Load a trained model
     
@@ -26,6 +22,7 @@ def load_model(model_path, num_classes=20, use_vit=False):
         model_path: Path to saved model weights
         num_classes: Number of classes
         use_vit: Whether to use ViT as backbone
+        image_size: Image size for ViT model (224, 384, 448, etc.)
         
     Returns:
         model: Loaded model
@@ -38,7 +35,8 @@ def load_model(model_path, num_classes=20, use_vit=False):
         hidden_dim=512,
         dropout=0.0,  # No dropout needed for inference
         use_vit=use_vit,
-        device=str(device)
+        device=str(device),
+        img_size=image_size if use_vit else None  # Only pass img_size for ViT models
     )
     
     # Load weights
@@ -77,6 +75,16 @@ def load_model(model_path, num_classes=20, use_vit=False):
     model.eval()
     return model
 
+def initialize_transform(image_size=224):
+    """Initialize the transform with the specified image size"""
+    global transform
+    transform = transforms.Compose([
+        transforms.Resize((image_size, image_size)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
+    print(f"Initialized transform with image size: {image_size}x{image_size}")
+
 def predict_tags(model, image, class_names, threshold=0.5):
     """
     Predict tags for an image
@@ -91,7 +99,7 @@ def predict_tags(model, image, class_names, threshold=0.5):
         tags: Dictionary of class name -> confidence score
         top_tags: List of top tag names (above threshold)
     """
-    # Transform image
+    # Transform image (using global transform)
     img_tensor = transform(image).unsqueeze(0).to(device)
     
     # Run inference
@@ -137,7 +145,7 @@ def get_class_names(dataset="voc"):
     else:
         raise ValueError(f"Unknown dataset: {dataset}")
 
-def tag_image_file(image_path, model_path, dataset="voc", threshold=0.5, use_vit=False):
+def tag_image_file(image_path, model_path, dataset="voc", threshold=0.5, use_vit=False, image_size=224):
     """
     Tag an image file using the trained model
     
@@ -147,12 +155,16 @@ def tag_image_file(image_path, model_path, dataset="voc", threshold=0.5, use_vit
         dataset: Dataset name for class names ('voc' or 'coco')
         threshold: Confidence threshold
         use_vit: Whether the model uses ViT backbone
+        image_size: Image size for the model (especially important for ViT)
         
     Returns:
         image: Original image
         tags: Dictionary of class name -> confidence score
         top_tags: List of top tag names (above threshold)
     """
+    # Initialize transform with the right image size
+    initialize_transform(image_size)
+    
     # Load image
     try:
         image = Image.open(image_path).convert('RGB')
@@ -167,7 +179,8 @@ def tag_image_file(image_path, model_path, dataset="voc", threshold=0.5, use_vit
     model = load_model(
         model_path=model_path,
         num_classes=len(class_names),
-        use_vit=use_vit
+        use_vit=use_vit,
+        image_size=image_size
     )
     
     # Predict tags
@@ -184,7 +197,7 @@ def display_results(image, tags, top_tags):
     if not top_tags:
         print("No tags predicted above threshold")
 
-def gradio_interface(image, model_path, dataset, threshold, use_vit):
+def gradio_interface(image, model_path, dataset, threshold, use_vit, image_size):
     """
     Gradio interface function for image tagging
     
@@ -194,6 +207,7 @@ def gradio_interface(image, model_path, dataset, threshold, use_vit):
         dataset: Dataset for class names
         threshold: Confidence threshold
         use_vit: Whether to use ViT backbone
+        image_size: Image size for the model
         
     Returns:
         result_image: Image with tags
@@ -201,6 +215,9 @@ def gradio_interface(image, model_path, dataset, threshold, use_vit):
     """
     if image is None:
         return None, "Please upload an image"
+    
+    # Initialize transform with the right image size
+    initialize_transform(image_size)
     
     # Get class names
     try:
@@ -212,7 +229,8 @@ def gradio_interface(image, model_path, dataset, threshold, use_vit):
     model = load_model(
         model_path=model_path,
         num_classes=len(class_names),
-        use_vit=use_vit
+        use_vit=use_vit,
+        image_size=image_size
     )
     
     # Predict tags
@@ -232,11 +250,14 @@ def gradio_interface(image, model_path, dataset, threshold, use_vit):
     
     return result_image, result_html
 
-def launch_web_interface(model_path, dataset, threshold, use_vit):
+def launch_web_interface(model_path, dataset, threshold, use_vit, image_size):
     """Launch the web interface"""
+    # Initialize transform with the right image size
+    initialize_transform(image_size)
+    
     # Create Gradio interface
     iface = gr.Interface(
-        fn=lambda img: gradio_interface(img, model_path, dataset, threshold, use_vit),
+        fn=lambda img: gradio_interface(img, model_path, dataset, threshold, use_vit, image_size),
         inputs=gr.Image(type="pil"),
         outputs=[
             gr.Image(type="pil", label="Input Image"),
@@ -246,7 +267,9 @@ def launch_web_interface(model_path, dataset, threshold, use_vit):
         description=(
             "Upload an image to get predicted tags using a trained GCN model. "
             f"Using model: {os.path.basename(model_path)}, "
-            f"dataset: {dataset}, threshold: {threshold}"
+            f"dataset: {dataset}, threshold: {threshold}, "
+            f"{'ViT backbone' if use_vit else 'ResNet backbone'}, "
+            f"image size: {image_size}x{image_size}"
         ),
     )
     
@@ -262,6 +285,8 @@ def main():
     parser.add_argument('--threshold', type=float, default=0.5, 
                         help='Confidence threshold for predictions')
     parser.add_argument('--use-vit', action='store_true', help='Use ViT backbone')
+    parser.add_argument('--image-size', type=int, default=224, 
+                        help='Image size for model input (224, 384, 448, etc.)')
     parser.add_argument('--web', action='store_true', help='Launch web interface')
     
     args = parser.parse_args()
@@ -270,6 +295,9 @@ def main():
     if not os.path.exists(args.model):
         print(f"Error: Model file not found: {args.model}")
         return
+    
+    # Initialize the transform with the specified image size
+    initialize_transform(args.image_size)
     
     # Launch web interface if requested or if no image provided
     if args.web or args.image is None:
@@ -280,7 +308,8 @@ def main():
                 model_path=args.model,
                 dataset=args.dataset,
                 threshold=args.threshold,
-                use_vit=args.use_vit
+                use_vit=args.use_vit,
+                image_size=args.image_size
             )
         except ImportError:
             print("Error: Gradio not installed. Install it with 'pip install gradio'")
@@ -297,7 +326,8 @@ def main():
             model_path=args.model,
             dataset=args.dataset,
             threshold=args.threshold,
-            use_vit=args.use_vit
+            use_vit=args.use_vit,
+            image_size=args.image_size
         )
         
         # Display results

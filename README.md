@@ -44,6 +44,7 @@ Options:
 - `--dataset`: Dataset for class names (`voc` or `coco`, default: `voc`)
 - `--threshold`: Confidence threshold for predictions (default: 0.5)
 - `--use-vit`: Use ViT backbone (default: False)
+- `--image-size`: Image size for model input (default: 224, recommended: 448 for ViT models)
 
 ### Web Interface
 
@@ -59,6 +60,16 @@ Or simply omit the `--image` parameter to automatically launch the web interface
 python run.py --model path/to/your/model.pth
 ```
 
+#### Using ViT Models in Web Interface
+
+To use Vision Transformer (ViT) models with the web interface, you must specify both the `--use-vit` flag and the appropriate `--image-size` parameter:
+
+```bash
+python run.py --model path/to/your/vit_model.pth --use-vit --image-size 448 --web
+```
+
+> **Important:** ViT models must use the same image size for inference as was used during training. Common image sizes for ViT models are 224, 384, and 448.
+
 The web interface allows you to:
 - Upload images from your computer
 - See prediction results instantly
@@ -72,6 +83,7 @@ Refer to our training scripts for training on your own data:
 - For VOC dataset: `train_voc.py`
 - For COCO dataset: `train_coco.py`
 - For evaluating models: `evaluate_voc.py` or `evaluate_coco.py`
+- For evaluating ViT models: `evaluate_voc_ViT.py` or `evaluate_coco_ViT.py`
 
 Example training command:
 
@@ -85,6 +97,11 @@ Example evaluating command:
 python evaluate_coco.py --coco-dir /path/to/COCO2017 --model-path /pretrained/model/path --device cuda
 ```
 
+For ViT models evaluation:
+```bash
+python evaluate_coco_ViT.py --coco-dir /path/to/COCO2017 --model-path /pretrained/vit/model/path --device cuda --image-size 448
+```
+
 ## Model Architecture
 
 Our model combines:
@@ -95,12 +112,18 @@ Our model combines:
 ## Example
 
 ```bash
-# Tag an image with VOC classes
+# Tag an image with VOC classes using ResNet backbone
 python run.py --image examples/dog.jpg --model models/best_model_voc.pth --dataset voc
+
+# Tag an image with VOC classes using ViT backbone
+python run.py --image examples/dog.jpg --model models/best_model_voc_vit.pth --dataset voc --use-vit --image-size 448
 
 # Tag an image with COCO classes
 python run.py --image examples/person.jpg --model models/best_model_coco.pth --dataset coco --threshold 0.3
 
-# Launch web interface
+# Launch web interface with ResNet model
 python run.py --model models/best_model_voc.pth --web
+
+# Launch web interface with ViT model (IMPORTANT: specify the correct image size)
+python run.py --model models/best_model_voc_vit.pth --use-vit --image-size 448 --web
 ```
