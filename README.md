@@ -104,15 +104,23 @@ The web interface allows you to:
 
 Refer to our training scripts for training on your own data:
 
-- For VOC dataset: `train_voc.py`
-- For COCO dataset: `train_coco.py`
+- For VOC dataset: `train_voc.py` or `train_voc_ViT.py`
+- For COCO dataset: `train_coco.py` or `train_coco_ViT.py`
 - For evaluating models: `evaluate_voc.py` or `evaluate_coco.py`
 - For evaluating ViT models: `evaluate_voc_ViT.py` or `evaluate_coco_ViT.py`
 
 Example training command:
 
+For ResNet backbone:
+
 ```bash
 python train_voc.py --voc-dir /path/to/VOCdevkit/VOC2007 --batch-size 16 --epochs 30 --save-dir ./models
+```
+
+For ViT backbone:
+
+```bash
+python train_voc_ViT.py --voc-dir /kaggle/input/pascal-voc-2007/VOCtrainval_06-Nov-2007/VOCdevkit/VOC2007 --batch-size 32 --epochs 30 --device cuda --image-size 448 --save-dir ./models
 ```
 
 Example evaluating command:
@@ -136,24 +144,9 @@ Our model combines:
 ## Example
 
 ```bash
-# Using the original script with ResNet backbone
-python run.py --image examples/dog.jpg --model models/best_model_voc.pth --dataset voc
-
-# Using the original script with ViT backbone
-python run.py --image examples/dog.jpg --model models/best_model_voc_vit.pth --dataset voc --use-vit --image-size 448
-
-# Using dedicated ResNet script (simpler)
-python run_resnet.py --image examples/dog.jpg --model models/best_model_voc.pth --dataset voc
-
-# Using dedicated ViT script (simpler)
-python run_vit.py --image examples/dog.jpg --model models/best_model_voc_vit.pth --dataset voc
-
-# Tag an image with COCO classes
-python run_resnet.py --image examples/person.jpg --model models/best_model_coco.pth --dataset coco --threshold 0.3
-
 # Launch web interface with ResNet model
 python run_resnet.py --model models/best_model_voc.pth --web
 
 # Launch web interface with ViT model
-python run_vit.py --model models/best_model_voc_vit.pth --web
+python run_vit.py --model models/best_model_voc_vit.pth --img-size 448 --web
 ```
