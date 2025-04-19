@@ -30,6 +30,8 @@ A Graph Convolutional Network (GCN) based image tagging tool that identifies obj
 
 ## Usage
 
+Pretrained models: [Google Drive](https://drive.google.com/drive/folders/1y2Yy30VyQyWulFgV3vzQnJ6rNxE13X_d?usp=sharing)
+
 ### Command-line Interface
 
 To tag a single image:
