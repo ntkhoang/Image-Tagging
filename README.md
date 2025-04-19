@@ -46,6 +46,22 @@ Options:
 - `--use-vit`: Use ViT backbone (default: False)
 - `--image-size`: Image size for model input (default: 224, recommended: 448 for ViT models)
 
+### Dedicated Scripts for Different Model Types
+
+For easier use, we now provide dedicated scripts for each backbone type:
+
+#### For ResNet Models
+```bash
+python run_resnet.py --image path/to/your/image.jpg --model path/to/your/resnet_model.pth
+```
+
+#### For ViT Models 
+```bash
+python run_vit.py --image path/to/your/image.jpg --model path/to/your/vit_model.pth
+```
+
+These specialized scripts handle the backbone-specific settings automatically (image size, feature dimensions, etc).
+
 ### Web Interface
 
 To launch the web interface:
@@ -66,6 +82,12 @@ To use Vision Transformer (ViT) models with the web interface, you must specify 
 
 ```bash
 python run.py --model path/to/your/vit_model.pth --use-vit --image-size 448 --web
+```
+
+Alternatively, use the dedicated ViT script which handles these settings automatically:
+
+```bash
+python run_vit.py --model path/to/your/vit_model.pth --web
 ```
 
 > **Important:** ViT models must use the same image size for inference as was used during training. Common image sizes for ViT models are 224, 384, and 448.
@@ -112,18 +134,24 @@ Our model combines:
 ## Example
 
 ```bash
-# Tag an image with VOC classes using ResNet backbone
+# Using the original script with ResNet backbone
 python run.py --image examples/dog.jpg --model models/best_model_voc.pth --dataset voc
 
-# Tag an image with VOC classes using ViT backbone
+# Using the original script with ViT backbone
 python run.py --image examples/dog.jpg --model models/best_model_voc_vit.pth --dataset voc --use-vit --image-size 448
 
+# Using dedicated ResNet script (simpler)
+python run_resnet.py --image examples/dog.jpg --model models/best_model_voc.pth --dataset voc
+
+# Using dedicated ViT script (simpler)
+python run_vit.py --image examples/dog.jpg --model models/best_model_voc_vit.pth --dataset voc
+
 # Tag an image with COCO classes
-python run.py --image examples/person.jpg --model models/best_model_coco.pth --dataset coco --threshold 0.3
+python run_resnet.py --image examples/person.jpg --model models/best_model_coco.pth --dataset coco --threshold 0.3
 
 # Launch web interface with ResNet model
-python run.py --model models/best_model_voc.pth --web
+python run_resnet.py --model models/best_model_voc.pth --web
 
-# Launch web interface with ViT model (IMPORTANT: specify the correct image size)
-python run.py --model models/best_model_voc_vit.pth --use-vit --image-size 448 --web
+# Launch web interface with ViT model
+python run_vit.py --model models/best_model_voc_vit.pth --web
 ```

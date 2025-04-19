@@ -11,36 +11,36 @@ from gcn_image_tagger_simplified import ImageGCNSimple
 # Set the default device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Define transforms will be updated based on image_size parameter
-transform = None
+# Define transforms for ResNet models (fixed at 224x224)
+transform = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+])
 
-def load_model(model_path, num_classes=20, use_vit=False, image_size=224):
+def load_model(model_path, num_classes=20):
     """
-    Load a trained model
+    Load a trained ResNet backbone model
     
     Args:
         model_path: Path to saved model weights
         num_classes: Number of classes
-        use_vit: Whether to use ViT as backbone
-        image_size: Image size for ViT model (224, 384, 448, etc.)
         
     Returns:
         model: Loaded model
     """
-    # Initialize model architecture
-    feature_dim = 768 if use_vit else 2048  # ViT-Base vs ResNet-50
+    # Initialize model architecture - fixed for ResNet
     model = ImageGCNSimple(
         num_classes=num_classes,
-        feature_dim=feature_dim,
+        feature_dim=2048,  # ResNet-50 feature dimension
         hidden_dim=512,
         dropout=0.0,  # No dropout needed for inference
-        use_vit=use_vit,
-        device=str(device),
-        img_size=image_size if use_vit else None  # Only pass img_size for ViT models
+        use_vit=False,  # Force ResNet usage
+        device=str(device)
     )
     
     # Load weights
-    print(f"Loading model from {model_path}")
+    print(f"Loading ResNet model from {model_path}")
     try:
         # First try loading as is (normal model save)
         state_dict = torch.load(model_path, map_location=device, weights_only=True)
@@ -75,16 +75,6 @@ def load_model(model_path, num_classes=20, use_vit=False, image_size=224):
     model.eval()
     return model
 
-def initialize_transform(image_size=224):
-    """Initialize the transform with the specified image size"""
-    global transform
-    transform = transforms.Compose([
-        transforms.Resize((image_size, image_size)),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-    ])
-    print(f"Initialized transform with image size: {image_size}x{image_size}")
-
 def predict_tags(model, image, class_names, threshold=0.5):
     """
     Predict tags for an image
@@ -99,7 +89,7 @@ def predict_tags(model, image, class_names, threshold=0.5):
         tags: Dictionary of class name -> confidence score
         top_tags: List of top tag names (above threshold)
     """
-    # Transform image (using global transform)
+    # Transform image
     img_tensor = transform(image).unsqueeze(0).to(device)
     
     # Run inference
@@ -133,38 +123,43 @@ def get_class_names(dataset="voc"):
             'pottedplant', 'sheep', 'sofa', 'train', 'tvmonitor'
         ]
     elif dataset.lower() == "coco":
-        # Simplified list of common COCO classes
-        # In a real application, you'd load the full 80 classes
+        # COCO dataset has 80 classes
         return [
             'person', 'bicycle', 'car', 'motorcycle', 'airplane',
             'bus', 'train', 'truck', 'boat', 'traffic light',
             'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird',
             'cat', 'dog', 'horse', 'sheep', 'cow',
-            'elephant', 'bear', 'zebra', 'giraffe', 'backpack'
+            'elephant', 'bear', 'zebra', 'giraffe', 'backpack',
+            'umbrella', 'handbag', 'tie', 'suitcase', 'frisbee',
+            'skis', 'snowboard', 'sports ball', 'kite', 'baseball bat',
+            'baseball glove', 'skateboard', 'surfboard', 'tennis racket', 'bottle',
+            'wine glass', 'cup', 'fork', 'knife', 'spoon',
+            'bowl', 'banana', 'apple', 'sandwich', 'orange',
+            'broccoli', 'carrot', 'hot dog', 'pizza', 'donut',
+            'cake', 'chair', 'couch', 'potted plant', 'bed',
+            'dining table', 'toilet', 'tv', 'laptop', 'mouse',
+            'remote', 'keyboard', 'cell phone', 'microwave', 'oven',
+            'toaster', 'sink', 'refrigerator', 'book', 'clock',
+            'vase', 'scissors', 'teddy bear', 'hair drier', 'toothbrush'
         ]
     else:
         raise ValueError(f"Unknown dataset: {dataset}")
 
-def tag_image_file(image_path, model_path, dataset="voc", threshold=0.5, use_vit=False, image_size=224):
+def tag_image_file(image_path, model_path, dataset="voc", threshold=0.5):
     """
-    Tag an image file using the trained model
+    Tag an image file using the trained ResNet model
     
     Args:
         image_path: Path to image file
         model_path: Path to model weights
         dataset: Dataset name for class names ('voc' or 'coco')
         threshold: Confidence threshold
-        use_vit: Whether the model uses ViT backbone
-        image_size: Image size for the model (especially important for ViT)
         
     Returns:
         image: Original image
         tags: Dictionary of class name -> confidence score
         top_tags: List of top tag names (above threshold)
     """
-    # Initialize transform with the right image size
-    initialize_transform(image_size)
-    
     # Load image
     try:
         image = Image.open(image_path).convert('RGB')
@@ -178,9 +173,7 @@ def tag_image_file(image_path, model_path, dataset="voc", threshold=0.5, use_vit
     # Load model
     model = load_model(
         model_path=model_path,
-        num_classes=len(class_names),
-        use_vit=use_vit,
-        image_size=image_size
+        num_classes=len(class_names)
     )
     
     # Predict tags
@@ -197,17 +190,15 @@ def display_results(image, tags, top_tags):
     if not top_tags:
         print("No tags predicted above threshold")
 
-def gradio_interface(image, model_path, dataset, threshold, use_vit, image_size):
+def gradio_interface(image, model_path, dataset, threshold):
     """
-    Gradio interface function for image tagging
+    Gradio interface function for image tagging with ResNet
     
     Args:
         image: Input image
         model_path: Path to model
         dataset: Dataset for class names
         threshold: Confidence threshold
-        use_vit: Whether to use ViT backbone
-        image_size: Image size for the model
         
     Returns:
         result_image: Image with tags
@@ -215,9 +206,6 @@ def gradio_interface(image, model_path, dataset, threshold, use_vit, image_size)
     """
     if image is None:
         return None, "Please upload an image"
-    
-    # Initialize transform with the right image size
-    initialize_transform(image_size)
     
     # Get class names
     try:
@@ -228,9 +216,7 @@ def gradio_interface(image, model_path, dataset, threshold, use_vit, image_size)
     # Load model
     model = load_model(
         model_path=model_path,
-        num_classes=len(class_names),
-        use_vit=use_vit,
-        image_size=image_size
+        num_classes=len(class_names)
     )
     
     # Predict tags
@@ -250,26 +236,21 @@ def gradio_interface(image, model_path, dataset, threshold, use_vit, image_size)
     
     return result_image, result_html
 
-def launch_web_interface(model_path, dataset, threshold, use_vit, image_size):
-    """Launch the web interface"""
-    # Initialize transform with the right image size
-    initialize_transform(image_size)
-    
+def launch_web_interface(model_path, dataset, threshold):
+    """Launch the web interface for ResNet model"""
     # Create Gradio interface
     iface = gr.Interface(
-        fn=lambda img: gradio_interface(img, model_path, dataset, threshold, use_vit, image_size),
+        fn=lambda img: gradio_interface(img, model_path, dataset, threshold),
         inputs=gr.Image(type="pil"),
         outputs=[
             gr.Image(type="pil", label="Input Image"),
             gr.HTML(label="Predicted Tags")
         ],
-        title="GCN Image Tagger",
+        title="GCN Image Tagger (ResNet Backbone)",
         description=(
-            "Upload an image to get predicted tags using a trained GCN model. "
+            "Upload an image to get predicted tags using a trained GCN model with ResNet backbone. "
             f"Using model: {os.path.basename(model_path)}, "
-            f"dataset: {dataset}, threshold: {threshold}, "
-            f"{'ViT backbone' if use_vit else 'ResNet backbone'}, "
-            f"image size: {image_size}x{image_size}"
+            f"dataset: {dataset}, threshold: {threshold}"
         ),
     )
     
@@ -277,16 +258,13 @@ def launch_web_interface(model_path, dataset, threshold, use_vit, image_size):
     iface.launch(share=True)
 
 def main():
-    parser = argparse.ArgumentParser(description='GCN Image Tagger')
+    parser = argparse.ArgumentParser(description='GCN Image Tagger with ResNet Backbone')
     parser.add_argument('--image', type=str, help='Path to an image file')
     parser.add_argument('--model', type=str, required=True, help='Path to model weights')
     parser.add_argument('--dataset', type=str, default='voc', choices=['voc', 'coco'], 
                         help='Dataset for class names')
     parser.add_argument('--threshold', type=float, default=0.5, 
                         help='Confidence threshold for predictions')
-    parser.add_argument('--use-vit', action='store_true', help='Use ViT backbone')
-    parser.add_argument('--image-size', type=int, default=224, 
-                        help='Image size for model input (224, 384, 448, etc.)')
     parser.add_argument('--web', action='store_true', help='Launch web interface')
     
     args = parser.parse_args()
@@ -296,20 +274,15 @@ def main():
         print(f"Error: Model file not found: {args.model}")
         return
     
-    # Initialize the transform with the specified image size
-    initialize_transform(args.image_size)
-    
     # Launch web interface if requested or if no image provided
     if args.web or args.image is None:
         try:
             import gradio as gr
-            print("Launching web interface...")
+            print("Launching web interface for ResNet model...")
             launch_web_interface(
                 model_path=args.model,
                 dataset=args.dataset,
-                threshold=args.threshold,
-                use_vit=args.use_vit,
-                image_size=args.image_size
+                threshold=args.threshold
             )
         except ImportError:
             print("Error: Gradio not installed. Install it with 'pip install gradio'")
@@ -325,9 +298,7 @@ def main():
             image_path=args.image,
             model_path=args.model,
             dataset=args.dataset,
-            threshold=args.threshold,
-            use_vit=args.use_vit,
-            image_size=args.image_size
+            threshold=args.threshold
         )
         
         # Display results
