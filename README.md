@@ -64,18 +64,18 @@ python run_vit.py --image path/to/your/image.jpg --model path/to/your/vit_model.
 
 These specialized scripts handle the backbone-specific settings automatically (image size, feature dimensions, etc).
 
-### Web Interface
+### Using ResNet-50 Models in Web Interface
 
 To launch the web interface:
 
 ```bash
-python run.py --model path/to/your/model.pth --web
+python run_resnet.py --model path/to/your/model.pth --web
 ```
 
 Or simply omit the `--image` parameter to automatically launch the web interface:
 
 ```bash
-python run.py --model path/to/your/model.pth
+python run_resnet.py --model path/to/your/model.pth
 ```
 
 #### Using ViT Models in Web Interface
@@ -83,7 +83,7 @@ python run.py --model path/to/your/model.pth
 To use Vision Transformer (ViT) models with the web interface, you must specify both the `--use-vit` flag and the appropriate `--image-size` parameter:
 
 ```bash
-python run.py --model path/to/your/vit_model.pth --use-vit --image-size 448 --web
+python run_vit.py --model path/to/your/vit_model.pth --use-vit --image-size 448 --web
 ```
 
 Alternatively, use the dedicated ViT script which handles these settings automatically:
