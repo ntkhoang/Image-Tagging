@@ -34,12 +34,6 @@ Pretrained models: [Google Drive](https://drive.google.com/drive/folders/1y2Yy30
 
 ### Command-line Interface
 
-To tag a single image:
-
-```bash
-python run.py --image path/to/your/image.jpg --model path/to/your/model.pth
-```
-
 Options:
 - `--image`: Path to input image (required)
 - `--model`: Path to trained model weights (required)
